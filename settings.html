@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Settings</title>
+    <link rel="stylesheet" href="./assets/styles.css" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+      .status-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 16px;
+        border-radius: 14px;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        margin-bottom: 16px;
+      }
+
+      .status-bar.success {
+        background: #ecfdf5;
+        border-color: #a7f3d0;
+      }
+
+      .status-bar.loading {
+        background: #eff6ff;
+        border-color: #bfdbfe;
+      }
+
+      .status-bar.error {
+        background: #fef2f2;
+        border-color: #fecaca;
+      }
+
+      .status-title {
+        margin: 0;
+        font-weight: 700;
+        color: #0f172a;
+      }
+
+      .status-sub {
+        margin: 4px 0 0;
+        font-size: 13px;
+        color: #475569;
+        line-height: 1.5;
+      }
+
+      .spinner {
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(255, 255, 255, 0.35);
+        border-top-color: #fff;
+        border-radius: 50%;
+        display: inline-block;
+        animation: spin 0.8s linear infinite;
+        vertical-align: -2px;
+        margin-right: 8px;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .btn.busy {
+        pointer-events: none;
+        opacity: 0.9;
+      }
+
+      .mini-note {
+        margin-top: 10px;
+        font-size: 13px;
+        color: #64748b;
+      }
+
+      .map-shell {
+        border-radius: 18px;
+        overflow: hidden;
+        border: 1px solid #e2e8f0;
+        background: #fff;
+      }
+
+      .map-hint {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        align-items: center;
+        padding: 12px 14px;
+        background: #f8fafc;
+        border-bottom: 1px solid #e2e8f0;
+      }
+
+      .map-label {
+        font-size: 13px;
+        color: #334155;
+        line-height: 1.4;
+      }
+
+      .map-wrap {
+        height: 360px;
+      }
+
+      .map {
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <script src="./assets/common.js"></script>
+    <script>
+      const { createApp, computed, onMounted, ref, watch, nextTick } = Vue;
+      const common = window.CheckinCommon;
+
+      createApp({
+        setup() {
+          const config = ref({ ...common.DEFAULT_CONFIG });
+          const saved = ref(false);
+          const busy = ref(false);
+          const statusType = ref("idle");
+          const statusTitle = ref("พร้อมใช้งาน");
+          const statusDesc = ref("ปรับตำแหน่งและขนาดกรอบเช็กอินได้เลย");
+          const boundary = computed(() => common.buildBoundary(config.value));
+          const mapEl = ref(null);
+
+          let map = null;
+          let boundaryRect = null;
+          let centerMarker = null;
+
+          function setStatus(type, title, desc) {
+            statusType.value = type;
+            statusTitle.value = title;
+            statusDesc.value = desc || "";
+          }
+
+          async function save() {
+            try {
+              busy.value = true;
+              setStatus(
+                "loading",
+                "กำลังบันทึก...",
+                "ระบบกำลังอัปเดตค่าพื้นที่ลง Google Sheet",
+              );
+              await common.saveConfig(config.value);
+
+              saved.value = true;
+              setStatus(
+                "success",
+                "บันทึกแล้ว",
+                "ค่าพื้นที่ถูกอัปเดตเรียบร้อย",
+              );
+              setTimeout(() => (saved.value = false), 1400);
+            } catch (err) {
+              console.error(err);
+              setStatus(
+                "error",
+                "บันทึกไม่สำเร็จ",
+                err?.message || "ลองใหม่อีกครั้ง",
+              );
+            } finally {
+              busy.value = false;
+            }
+          }
+
+          async function restoreDefault() {
+            try {
+              busy.value = true;
+              config.value = { ...common.DEFAULT_CONFIG };
+              setStatus("loading", "กำลังคืนค่าเริ่มต้น...", "กรุณารอสักครู่");
+              await common.saveConfig(config.value);
+
+              saved.value = true;
+              setStatus(
+                "success",
+                "คืนค่าเริ่มต้นแล้ว",
+                "ระบบกลับไปใช้ค่ามาตรฐานเรียบร้อย",
+              );
+              setTimeout(() => (saved.value = false), 1400);
+            } catch (err) {
+              console.error(err);
+              setStatus(
+                "error",
+                "คืนค่าไม่สำเร็จ",
+                err?.message || "ลองใหม่อีกครั้ง",
+              );
+            } finally {
+              busy.value = false;
+            }
+          }
+
+          function syncMap() {
+            if (!map || !boundary.value) return;
+            const b = boundary.value;
+            const bounds = [
+              [b.minLat, b.minLng],
+              [b.maxLat, b.maxLng],
+            ];
+            boundaryRect?.setBounds(bounds);
+            centerMarker?.setLatLng([b.centerLat, b.centerLng]);
+            map.fitBounds(bounds, { padding: [30, 30] });
+          }
+
+          function initMap() {
+            if (map || !mapEl.value || !window.L) return;
+            const b = boundary.value;
+
+            map = L.map(mapEl.value, { zoomControl: true });
+            L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+              attribution: "&copy; OpenStreetMap contributors",
+              maxZoom: 19,
+            }).addTo(map);
+
+            boundaryRect = L.rectangle(
+              [
+                [b.minLat, b.minLng],
+                [b.maxLat, b.maxLng],
+              ],
+              {
+                color: "#2563eb",
+                weight: 2,
+                fillColor: "#2563eb",
+                fillOpacity: 0.1,
+              },
+            ).addTo(map);
+
+            centerMarker = L.marker([b.centerLat, b.centerLng], {
+              draggable: true,
+            }).addTo(map);
+            centerMarker.bindPopup("ลาก marker นี้เพื่อย้ายจุดศูนย์กลาง");
+
+            centerMarker.on("dragend", () => {
+              const latlng = centerMarker.getLatLng();
+              config.value.centerLat = Number(latlng.lat.toFixed(6));
+              config.value.centerLng = Number(latlng.lng.toFixed(6));
+              syncMap();
+              setStatus(
+                "loading",
+                "ย้ายตำแหน่งแล้ว",
+                "กดบันทึกเพื่อเก็บค่าใหม่ลงระบบ",
+              );
+            });
+
+            map.fitBounds(
+              [
+                [b.minLat, b.minLng],
+                [b.maxLat, b.maxLng],
+              ],
+              { padding: [30, 30] },
+            );
+          }
+
+          watch(
+            () => [
+              config.value.centerLat,
+              config.value.centerLng,
+              config.value.northMeters,
+              config.value.southMeters,
+              config.value.eastMeters,
+              config.value.westMeters,
+            ],
+            () => {
+              syncMap();
+            },
+          );
+
+          onMounted(async () => {
+            config.value = await common.getConfig();
+            await nextTick();
+            initMap();
+            syncMap();
+          });
+
+          return {
+            config,
+            saved,
+            busy,
+            statusType,
+            statusTitle,
+            statusDesc,
+            boundary,
+            save,
+            restoreDefault,
+            common,
+            mapEl,
+          };
+        },
+        template: `
+        <div class="container">
+          <div class="topbar">
+            <div class="brand">
+              <div class="brand-badge">SE</div>
+              <div>
+                <h1>Settings</h1>
+                <p>ปรับตำแหน่งและขนาดกรอบเช็กอิน</p>
+              </div>
+            </div>
+            <div class="nav">
+              <a href="./index.html">QR Login</a>
+              <a href="./user/checkin.html">User</a>
+              <a href="./auth.html">Admin</a>
+              <a class="active" href="./settings.html">Settings</a>
+              <a href="./logs.html">Logs</a>
+            </div>
+          </div>
+
+          <div class="grid">
+            <section class="card span-6 stack">
+              <div class="status-bar" :class="statusType">
+                <div>
+                  <p class="status-title">{{ statusTitle }}</p>
+                  <p class="status-sub">{{ statusDesc }}</p>
+                </div>
+                <div v-if="busy" class="spinner" style="border-top-color:#2563eb;border-color:#bfdbfe;border-top-color:#2563eb"></div>
+              </div>
+
+              <div class="field">
+                <label>ชื่อจุด</label>
+                <input v-model="config.siteName" />
+              </div>
+
+              <div class="grid">
+                <div class="span-6 field"><label>โน้ต</label><input v-model="config.note" /></div>
+                <div class="span-6 field"><label>Center Latitude</label><input v-model.number="config.centerLat" type="number" step="0.000001" /></div>
+                <div class="span-6 field"><label>Center Longitude</label><input v-model.number="config.centerLng" type="number" step="0.000001" /></div>
+                <div class="span-3 field"><label>North meters</label><input v-model.number="config.northMeters" type="number" min="0" /></div>
+                <div class="span-3 field"><label>South meters</label><input v-model.number="config.southMeters" type="number" min="0" /></div>
+                <div class="span-3 field"><label>East meters</label><input v-model.number="config.eastMeters" type="number" min="0" /></div>
+                <div class="span-3 field"><label>West meters</label><input v-model.number="config.westMeters" type="number" min="0" /></div>
+              </div>
+
+              <div class="actions">
+                <button class="btn primary" :class="{ busy }" @click="save" :disabled="busy">
+                  <span v-if="busy" class="spinner"></span>
+                  {{ busy ? 'กำลังบันทึก...' : 'บันทึก' }}
+                </button>
+                <button class="btn ghost" :class="{ busy }" @click="restoreDefault" :disabled="busy">
+                  <span v-if="busy" class="spinner"></span>
+                  {{ busy ? 'กำลังทำงาน...' : 'คืนค่าเริ่มต้น' }}
+                </button>
+              </div>
+
+              <div class="card" style="padding:16px;background:#fafbff;border-style:dashed">
+                <strong>วิธีใช้งาน</strong>
+                <p class="muted" style="margin:8px 0 0">ลาก marker บนแผนที่เพื่อย้ายศูนย์กลางพื้นที่ที่ login ได้ แล้วค่อยปรับระยะ North / South / East / West เพื่อขยายหรือย่อกรอบ</p>
+              </div>
+
+              <div class="mini-note">
+                ถ้าขยับ marker แล้ว ระบบจะยังไม่บันทึกจนกดปุ่ม <b>บันทึก</b>
+              </div>
+            </section>
+
+            <aside class="card span-6 stack">
+              <h2>Preview</h2>
+              <div class="map-shell">
+                <div class="map-hint">
+                  <div class="map-label">ลาก marker เพื่อย้ายตำแหน่ง • แผนที่จะอัปเดตกรอบให้ทันที</div>
+                  <div class="pill success">Draggable marker</div>
+                </div>
+                <div class="map-wrap"><div ref="mapEl" class="map"></div></div>
+              </div>
+            </aside>
+
+            <section class="card full">
+              <div class="grid">
+                <div class="span-3 field"><label>Center Latitude</label><div class="code">{{ common.formatNumber(config.centerLat) }}</div></div>
+                <div class="span-3 field"><label>Center Longitude</label><div class="code">{{ common.formatNumber(config.centerLng) }}</div></div>
+                <div class="span-3 field"><label>North</label><div class="code">{{ common.formatNumber(boundary.maxLat) }}</div></div>
+                <div class="span-3 field"><label>South</label><div class="code">{{ common.formatNumber(boundary.minLat) }}</div></div>
+                <div class="span-3 field"><label>East</label><div class="code">{{ common.formatNumber(boundary.maxLng) }}</div></div>
+                <div class="span-3 field"><label>West</label><div class="code">{{ common.formatNumber(boundary.minLng) }}</div></div>
+                <div class="span-6 field"><label>รูปแบบ</label><div class="code">พื้นที่อนุญาตแบบสี่เหลี่ยม (geofence box)</div></div>
+              </div>
+            </section>
+
+            <section class="card full">
+              <p class="muted" style="margin:0">ตั้งค่าชุดนี้ใช้ร่วมกับหน้า auth ทันที และเก็บค่าพื้นที่ลงชีต location ในไฟล์ Google Sheet เดียวกัน</p>
+            </section>
+          </div>
+        </div>
+      `,
+      }).mount("#app");
+    </script>
+  </body>
+</html>
