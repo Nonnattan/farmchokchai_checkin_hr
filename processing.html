@@ -5,18 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>กำลังบันทึกข้อมูล</title>
     <link rel="stylesheet" href="./assets/styles.css" />
-    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <style>
       body { margin:0; font-family:sans-serif; background:#f8fafc; color:#0f172a; }
       .wrap { min-height:100vh; display:grid; place-items:center; padding:24px; }
       .card { width:min(520px, 100%); background:#fff; border:1px solid #e2e8f0; border-radius:24px; box-shadow: 0 16px 36px rgba(15,23,42,.06); padding:32px 24px; text-align:center; }
-      .spinner {
-        width:72px; height:72px; border-radius:50%;
-        border: 8px solid #e2e8f0;
-        border-top-color:#06c755;
-        margin:0 auto 20px;
-        animation: spin 1s linear infinite;
-      }
+      .spinner { width:72px; height:72px; border-radius:50%; border: 8px solid #e2e8f0; border-top-color:#06c755; margin:0 auto 20px; animation: spin 1s linear infinite; }
       @keyframes spin { to { transform: rotate(360deg); } }
       .title { font-size:22px; font-weight:800; margin:0 0 10px; }
       .muted { color:#64748b; line-height:1.6; }
@@ -30,108 +24,8 @@
     </style>
   </head>
   <body>
-    <div id="app"></div>
-    <script src="./assets/common.js"></script>
-    <script>
-      const { createApp, onMounted, ref } = Vue;
-      const common = window.CheckinCommon;
+    <div id="app"></div>    <script src="./assets/common.js"></script>
 
-      createApp({
-        setup() {
-          const status = ref("กำลังบันทึกข้อมูล...");
-          const detail = ref("กรุณารอสักครู่");
-          const tagClass = ref("");
-          const debug = ref("");
-          const lastCheckin = ref(null);
-
-          async function run() {
-            sessionStorage.removeItem("checkin_flow_running");
-            try {
-              const payload = common.getPendingCheckin();
-              if (!payload) {
-                throw new Error("ไม่พบข้อมูลเช็กอิน กรุณาเริ่มใหม่");
-              }
-
-              debug.value = JSON.stringify(payload);
-              lastCheckin.value = payload;
-
-              const res = await common.addLog(payload, 30000);
-
-              localStorage.setItem(
-                "last_checkin",
-                JSON.stringify({
-                  ...payload,
-                  savedAt: new Date().toISOString(),
-                  response: res || null,
-                  timeText: common.formatDate(payload.time),
-                }),
-              );
-
-              common.clearPendingCheckin();
-
-              status.value = "บันทึกข้อมูลสำเร็จ";
-              detail.value = "ระบบกำลังพาคุณไปหน้าสำเร็จ";
-              tagClass.value = "ok";
-
-              setTimeout(() => {
-                window.location.replace("https://sop-management.itsupport-farmchokchai.workers.dev/");
-              }, 900);
-            } catch (err) {
-              console.error(err);
-              const payload = common.getPendingCheckin();
-              if (payload) {
-                localStorage.setItem(
-                  "last_failed_checkin",
-                  JSON.stringify({
-                    ...payload,
-                    failedAt: new Date().toISOString(),
-                    error: err?.message || "เกิดข้อผิดพลาด",
-                  }),
-                );
-              }
-              status.value = "บันทึกข้อมูลไม่สำเร็จ";
-              detail.value =
-                err?.message === "request_timeout"
-                  ? "ระบบใช้เวลานานกว่าปกติ กรุณาลองกดบันทึกอีกครั้ง"
-                  : err?.message || "เกิดข้อผิดพลาด";
-              tagClass.value = "error";
-            }
-          }
-
-          function retry() {
-            status.value = "กำลังบันทึกข้อมูล...";
-            detail.value = "กรุณารอสักครู่";
-            tagClass.value = "";
-            run();
-          }
-
-          onMounted(run);
-
-          return { status, detail, tagClass, debug, lastCheckin, retry };
-        },
-        template: `
-          <div class="wrap">
-            <div class="card">
-              <div class="spinner"></div>
-              <div class="pill" :class="tagClass">{{ status }}</div>
-              <h1 class="title">กำลังบันทึกข้อมูลเช็กอิน</h1>
-              <p class="muted">{{ detail }}</p>
-
-              <div v-if="lastCheckin" class="detail-box muted small">
-                <div>ชื่อ: {{ lastCheckin.displayName || lastCheckin.name || '-' }}</div>
-                <div v-if="lastCheckin.email">Email: {{ lastCheckin.email }}</div>
-                <div>เวลา: {{ common.formatDate(lastCheckin.time) }}</div>
-              </div>
-
-              <p v-if="debug" class="muted small" style="margin-top:16px;text-align:left;word-break:break-all">
-                {{ debug }}
-              </p>
-              <a v-if="tagClass === 'error'" class="btn" href="./user/checkin.html">กลับไปลองใหม่</a>
-              <button v-if="tagClass === 'error'" class="btn" @click="retry" style="margin-top:10px">ลองบันทึกอีกครั้ง</button>
-            </div>
-          </div>
-        `,
-      }).mount("#app");
-    </script>
+    <script src="./assets/page-scripts/processing.js"></script>
   </body>
 </html>

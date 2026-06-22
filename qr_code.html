@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>QR Code</title>
+    <link rel="stylesheet" href="./assets/styles.css" />
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+    <script src="./assets/firebase-config.js"></script>
+    <script src="./assets/firebase-auth.js"></script>
+    <style>
+      .qr-layout{display:grid;grid-template-columns:1.1fr .9fr;gap:20px}
+      .qr-box{display:grid;place-items:center;padding:18px;background:#fff;border:1px solid var(--line);border-radius:24px;min-height:320px}
+      .subhead{margin:4px 0 0;color:var(--muted)}
+      .mini-note{margin-top:10px;font-size:13px;color:var(--muted);line-height:1.5}
+      .status-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-radius:14px;background:#f8fafc;border:1px solid var(--line)}
+      .status-bar.success{background:#ecfdf3;border-color:#a7f3d0}
+      .status-bar.loading{background:#eff6ff;border-color:#bfdbfe}
+      .status-bar.error{background:#fef2f2;border-color:#fecaca}
+      .status-title{margin:0;font-weight:700;color:#0f172a}
+      .status-sub{margin:4px 0 0;font-size:13px;color:#475569;line-height:1.5}
+      .spinner{width:14px;height:14px;border:2px solid rgba(255,255,255,0.35);border-top-color:#fff;border-radius:50%;display:inline-block;animation:spin 0.8s linear infinite;vertical-align:-2px;margin-right:8px}
+      @keyframes spin{to{transform:rotate(360deg)}}
+      @media (max-width: 900px){.qr-layout{grid-template-columns:1fr}}
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>    <script src="./assets/common.js"></script>
+    <script src="./assets/components/nav-tabs.js"></script>
+
+    <script src="./assets/page-scripts/qr_code.js"></script>
+  </body>
+</html>

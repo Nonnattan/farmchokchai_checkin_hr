@@ -3,355 +3,80 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>QR Check-in</title>
+    <title>Farm Chokchai Login</title>
     <link rel="stylesheet" href="./assets/styles.css" />
-    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+    <script src="./assets/firebase-config.js"></script>
+    <script src="./assets/common.js"></script>
+    <script src="./assets/firebase-auth.js"></script>
     <style>
-      .status-bar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 14px 16px;
-        border-radius: 14px;
-        background: #f8fafc;
-        border: 1px solid #e2e8f0;
-        margin-bottom: 16px;
-      }
-
-      .status-bar.success {
-        background: #ecfdf5;
-        border-color: #a7f3d0;
-      }
-
-      .status-bar.loading {
-        background: #eff6ff;
-        border-color: #bfdbfe;
-      }
-
-      .status-bar.error {
-        background: #fef2f2;
-        border-color: #fecaca;
-      }
-
-      .status-title {
-        margin: 0;
-        font-weight: 700;
-        color: #0f172a;
-      }
-
-      .status-sub {
-        margin: 4px 0 0;
-        font-size: 13px;
-        color: #475569;
-        line-height: 1.5;
-      }
-
-      .spinner {
-        width: 14px;
-        height: 14px;
-        border: 2px solid rgba(255, 255, 255, 0.35);
-        border-top-color: #fff;
-        border-radius: 50%;
-        display: inline-block;
-        animation: spin 0.8s linear infinite;
-        vertical-align: -2px;
-        margin-right: 8px;
-      }
-
-      @keyframes spin {
-        to {
-          transform: rotate(360deg);
-        }
-      }
-
-      .btn.busy {
-        pointer-events: none;
-        opacity: 0.9;
-      }
-
-      .qr-box {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        padding: 16px;
-        background: #fff;
-        border-radius: 20px;
-        border: 1px solid #e2e8f0;
-      }
-
-      .mini-note {
-        margin-top: 10px;
-        font-size: 13px;
-        color: #64748b;
-        line-height: 1.5;
-      }
+      .auth-shell{min-height:100vh;display:grid;place-items:center;padding:24px}
+      .auth-card{width:min(980px,100%);display:grid;grid-template-columns:1.1fr .9fr;gap:18px;background:#fff;border:1px solid var(--line);border-radius:28px;box-shadow:var(--shadow);padding:24px}
+      .hero{padding:12px}
+      .hero-badge{display:inline-flex;padding:8px 12px;border-radius:999px;background:var(--primary-soft);color:var(--primary);font-weight:800;font-size:13px}
+      .hero h1{margin:14px 0 10px;font-size:34px;line-height:1.15}
+      .hero p{margin:0;color:var(--muted);line-height:1.7}
+      .login-box{background:#f8fafc;border:1px solid var(--line);border-radius:24px;padding:22px}
+      .login-grid{display:grid;gap:12px}
+      .helper-box{margin-top:16px;padding:14px 16px;border-radius:16px;background:#fff;border:1px solid var(--line);font-size:13px;color:#475569;line-height:1.6}
+      .error{padding:12px 14px;border-radius:14px;background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;font-size:14px}
+      .success{padding:12px 14px;border-radius:14px;background:#ecfdf3;border:1px solid #a7f3d0;color:#047857;font-size:14px}
+      .small-link{font-size:13px;color:var(--muted)}
+      @media (max-width: 900px){.auth-card{grid-template-columns:1fr}.hero h1{font-size:28px}}
     </style>
   </head>
   <body>
     <div id="app"></div>
 
-    <script src="./assets/common.js"></script>
-    <script>
-      const { createApp, computed, onMounted, ref } = Vue;
-      const common = window.CheckinCommon;
-
-      createApp({
-        setup() {
-          const config = ref({ ...common.DEFAULT_CONFIG });
-          const qrContainer = ref(null);
-          const qrText = ref("");
-          const checkinUrl = ref("");
-          const isSaved = ref(false);
-          const busy = ref(false);
-          const statusType = ref("idle");
-          const statusTitle = ref("พร้อมใช้งาน");
-          const statusDesc = ref("กดปุ่มด้านล่างเพื่อบันทึกและสร้าง QR");
-          const boundary = computed(() => common.buildBoundary(config.value));
-          const userPageUrl = new URL("./user/checkin.html", location.href)
-            .href;
-
-          function setStatus(type, title, desc) {
-            statusType.value = type;
-            statusTitle.value = title;
-            statusDesc.value = desc || "";
-          }
-
-          async function sync() {
-            try {
-              busy.value = true;
-              setStatus(
-                "loading",
-                "กำลังบันทึก...",
-                "อัปเดตค่าพื้นที่และสร้าง QR ใหม่",
-              );
-              await common.saveConfig(config.value);
-              buildQR();
-              isSaved.value = true;
-              setStatus("success", "บันทึกแล้ว", "สร้าง QR ใหม่เรียบร้อย");
-              setTimeout(() => (isSaved.value = false), 1200);
-            } catch (err) {
-              console.error(err);
-              setStatus(
-                "error",
-                "บันทึกไม่สำเร็จ",
-                err?.message || "ลองใหม่อีกครั้ง",
-              );
-            } finally {
-              busy.value = false;
-            }
-          }
-
-          function buildQR() {
-            const token = crypto.randomUUID
-              ? crypto.randomUUID().slice(0, 8).toUpperCase()
-              : String(Date.now()).slice(-8);
-
-            const url = `${userPageUrl}?session=${encodeURIComponent(token)}&site=${encodeURIComponent(config.value.siteName)}`;
-            checkinUrl.value = url;
-            qrText.value = token;
-
-            if (qrContainer.value) qrContainer.value.innerHTML = "";
-            new QRCode(qrContainer.value, {
-              text: url,
-              width: 220,
-              height: 220,
-              colorDark: "#172033",
-              colorLight: "#ffffff",
-              correctLevel: QRCode.CorrectLevel.M,
-            });
-
-            setStatus(
-              "success",
-              "QR พร้อมใช้งาน",
-              "สแกนแล้วจะพาไปหน้า user check-in ทันที",
-            );
-          }
-
-          async function resetDemo() {
-            try {
-              busy.value = true;
-              setStatus("loading", "กำลังล้างข้อมูลเดโม...", "กรุณารอสักครู่");
-              common.resetData();
-              config.value = { ...common.DEFAULT_CONFIG };
-              await common.saveConfig(config.value);
-              buildQR();
-            } catch (err) {
-              console.error(err);
-              setStatus(
-                "error",
-                "ล้างข้อมูลไม่สำเร็จ",
-                err?.message || "ลองใหม่อีกครั้ง",
-              );
-            } finally {
-              busy.value = false;
-            }
-          }
-
-          onMounted(async () => {
-            if (window.QRCode) {
-              config.value = await common.getConfig();
-              buildQR();
-            }
-          });
-
-          return {
-            config,
-            qrContainer,
-            qrText,
-            checkinUrl,
-            isSaved,
-            busy,
-            statusType,
-            statusTitle,
-            statusDesc,
-            boundary,
-            sync,
-            buildQR,
-            resetDemo,
-            common,
-          };
-        },
-        template: `
-        <div class="container">
-          <div class="topbar">
-            <div class="brand">
-              <div class="brand-badge">CI</div>
-              <div>
-                <h1>QR Check-in Web App</h1>
-                <p>Vue CDN • login ผ่าน QR • ตรวจพิกัดภายในกรอบสี่เหลี่ยม</p>
-              </div>
-            </div>
-            <div class="nav">
-              <a class="active" href="./index.html">QR Login</a>
-              <a href="./user/checkin.html">User</a>
-              <a href="./auth.html">Admin</a>
-              <a href="./settings.html">Settings</a>
-              <a href="./logs.html">Logs</a>
+    <script type="text/x-template" id="login-template">
+      <div class="auth-shell">
+        <div class="auth-card">
+          <div class="hero">
+            <span class="hero-badge">Firebase Login • Firestore role</span>
+            <h1>Farm Chokchai Check-in</h1>
+            <p>ล็อกอินด้วย Firebase Authentication แล้วอ่าน role จาก Firestore collection <b>users</b> โดยดูจาก doc id = uid หรือ email ที่ตรงกับผู้ใช้</p>
+            <div class="helper-box">
+              <div><b>masteradmin</b> = หลังล็อกอินไปหน้า Users เพื่อจัดการ role</div>
+              <div><b>admin</b> = หลังล็อกอินไปหน้า QR Code</div>
+              <div><b>user</b> = ไปหน้าเช็กอินของผู้ใช้</div>
+              <div style="margin-top:8px;color:#64748b">ตัวอย่าง doc ใน Firestore ที่มี <b>active</b>, <b>email</b>, <b>role</b> จะถูกอ่านอัตโนมัติ</div>
             </div>
           </div>
 
-          <div class="grid">
-            <section class="card span-7 stack">
-              <div class="status-bar" :class="statusType">
-                <div>
-                  <p class="status-title">{{ statusTitle }}</p>
-                  <p class="status-sub">{{ statusDesc }}</p>
-                </div>
-                <div v-if="busy" class="spinner" style="border-top-color:#2563eb;border-color:#bfdbfe;border-top-color:#2563eb"></div>
-              </div>
+          <div class="login-box">
+            <h2 style="margin:0 0 8px;">เข้าสู่ระบบ</h2>
+            <p class="muted" style="margin:0 0 16px;">ใช้ email/password จาก Firebase Authentication</p>
 
-              <div>
-                <h2>สร้าง QR สำหรับเข้า user check-in</h2>
-                <p class="muted">QR จะพาไปหน้า user check-in พร้อม session token แบบง่าย ๆ สำหรับโปรโตไทป์</p>
-              </div>
+            <div v-if="state==='error'" class="error" style="margin-bottom:12px">{{ message }}</div>
+            <div v-if="state==='success'" class="success" style="margin-bottom:12px">{{ message }}</div>
+            <div v-else class="helper-box" style="margin-bottom:12px">{{ message }}</div>
 
-              <div class="grid">
-                <div class="span-6 field">
-                  <label>ชื่อจุดเช็กอิน</label>
-                  <input v-model="config.siteName" placeholder="เช่น สำนักงานใหญ่" />
-                </div>
-                <div class="span-6 field">
-                  <label>โน้ตแสดงในหน้า auth</label>
-                  <input v-model="config.note" placeholder="ข้อความแจ้งเตือน" />
-                </div>
-                <div class="span-3 field">
-                  <label>Center Lat</label>
-                  <input v-model="config.centerLat" type="number" step="0.000001" />
-                </div>
-                <div class="span-3 field">
-                  <label>Center Lng</label>
-                  <input v-model="config.centerLng" type="number" step="0.000001" />
-                </div>
-                <div class="span-3 field">
-                  <label>North (m)</label>
-                  <input v-model="config.northMeters" type="number" min="0" />
-                </div>
-                <div class="span-3 field">
-                  <label>South (m)</label>
-                  <input v-model="config.southMeters" type="number" min="0" />
-                </div>
-                <div class="span-3 field">
-                  <label>East (m)</label>
-                  <input v-model="config.eastMeters" type="number" min="0" />
-                </div>
-                <div class="span-3 field">
-                  <label>West (m)</label>
-                  <input v-model="config.westMeters" type="number" min="0" />
-                </div>
+            <div class="login-grid">
+              <div class="field">
+                <label>Email</label>
+                <input v-model="email" type="email" placeholder="name@example.com" autocomplete="username" />
               </div>
+              <div class="field">
+                <label>Password</label>
+                <input v-model="password" type="password" placeholder="••••••••" autocomplete="current-password" />
+              </div>
+              <button class="btn primary" :disabled="loading" @click="login">
+                {{ loading ? 'กำลังเข้าสู่ระบบ...' : 'Login' }}
+              </button>
+            </div>
 
-              <div class="actions">
-                <button class="btn primary" :class="{ busy }" @click="sync" :disabled="busy">
-                  <span v-if="busy" class="spinner"></span>
-                  {{ busy ? 'กำลังบันทึก...' : 'บันทึกและอัปเดต QR' }}
-                </button>
-                <button class="btn ghost" :class="{ busy }" @click="buildQR" :disabled="busy">
-                  <span v-if="busy" class="spinner"></span>
-                  {{ busy ? 'กำลังทำงาน...' : 'สร้าง QR ใหม่' }}
-                </button>
-                <button class="btn ghost" :class="{ busy }" @click="resetDemo" :disabled="busy">
-                  <span v-if="busy" class="spinner"></span>
-                  {{ busy ? 'กำลังล้าง...' : 'ล้างข้อมูลเดโม' }}
-                </button>
-              </div>
-
-              <div class="kpi">
-                <div class="item"><span class="muted small">สถานะ</span><b>{{ isSaved ? 'บันทึกแล้ว' : 'พร้อมใช้งาน' }}</b></div>
-                <div class="item"><span class="muted small">พื้นที่</span><b>สี่เหลี่ยม</b></div>
-                <div class="item"><span class="muted small">โหมด</span><b>Frontend only</b></div>
-              </div>
-
-              <div class="mini-note">
-                เวลากดปุ่มแล้ว ปุ่มจะเปลี่ยนสถานะทันทีเพื่อให้รู้ว่าระบบกำลังทำงาน
-              </div>
-            </section>
-
-            <aside class="card span-5 stack">
-              <div>
-                <h2>QR Preview</h2>
-                <p class="muted small">สแกนด้วยมือถือแล้วจะเปิดหน้า user check-in</p>
-              </div>
-              <div class="qr-box" ref="qrContainer"></div>
-
-              <div class="stack">
-                <div class="field">
-                  <label>ลิงก์ auth</label>
-                  <div class="code">{{ checkinUrl || 'กำลังสร้าง...' }}</div>
-                </div>
-                <div class="field">
-                  <label>Session token</label>
-                  <div class="code">{{ qrText || '-' }}</div>
-                </div>
-              </div>
-            </aside>
-
-            <section class="card full stack">
-              <h3>จุดที่เข้าได้</h3>
-              <div class="grid">
-                <div class="span-3 field"><label>North</label><div class="code">{{ common.formatNumber(boundary.maxLat) }}</div></div>
-                <div class="span-3 field"><label>South</label><div class="code">{{ common.formatNumber(boundary.minLat) }}</div></div>
-                <div class="span-3 field"><label>East</label><div class="code">{{ common.formatNumber(boundary.maxLng) }}</div></div>
-                <div class="span-3 field"><label>West</label><div class="code">{{ common.formatNumber(boundary.minLng) }}</div></div>
-              </div>
-              <p class="muted" style="margin:0">คนที่จะ login ได้ต้องเปิด QR นี้แล้วอยู่ภายในกรอบพิกัดที่แสดงด้านบน</p>
-            </section>
-
-            <section class="card full">
-              <h3>สิ่งที่โปรเจกต์นี้ทำได้</h3>
-              <div class="row muted">
-                <div class="pill success">QR login</div>
-                <div class="pill warning">GPS check</div>
-                <div class="pill success">Adjustable geofence</div>
-                <div class="pill warning">Clean theme</div>
-              </div>
-            </section>
+            <div class="helper-box">
+              ถ้าสร้างผู้ใช้ไว้แล้ว แต่ยังไม่ขึ้น role ให้ตรวจว่า doc ใน collection <b>users</b> ใช้ uid เดียวกับ Firebase Auth หรือมี email ตรงกัน และเปิดอ่าน Firestore ได้
+            </div>
+            <div class="small-link" style="margin-top:10px;">role ปัจจุบัน: <b>{{ role || '-' }}</b></div>
           </div>
         </div>
-      `,
-      }).mount("#app");
+      </div>
     </script>
+
+    <script src="./assets/page-scripts/login.js"></script>
   </body>
 </html>

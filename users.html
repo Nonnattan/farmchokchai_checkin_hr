@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>User Roles</title>
+    <link rel="stylesheet" href="./assets/styles.css" />
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+    <script src="./assets/firebase-config.js"></script>
+    <script src="./assets/common.js"></script>
+    <script src="./assets/components/nav-tabs.js"></script>
+    <script src="./assets/firebase-auth.js"></script>
+    <style>
+      .layout{display:grid;grid-template-columns:.95fr 1.05fr;gap:20px}
+      .status-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-radius:14px;background:#f8fafc;border:1px solid var(--line)}
+      .status-bar.success{background:#ecfdf3;border-color:#a7f3d0}
+      .status-bar.loading{background:#eff6ff;border-color:#bfdbfe}
+      .status-bar.error{background:#fef2f2;border-color:#fecaca}
+      .status-title{margin:0;font-weight:700;color:#0f172a}
+      .status-sub{margin:4px 0 0;font-size:13px;color:#475569;line-height:1.5}
+      .table-wrap{overflow:auto;border:1px solid var(--line);border-radius:18px;background:#fff}
+      .table{width:100%;border-collapse:collapse}
+      .table th,.table td{padding:12px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+      .table th{font-size:13px;color:#475467;background:#fafbff;position:sticky;top:0;z-index:1}
+      .table td{font-size:14px}
+      .click-row{cursor:pointer}
+      .click-row:hover{background:#f8fafc}
+      .click-row.active{background:#eff6ff}
+      .pill-sm{display:inline-flex;padding:6px 10px;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:12px;font-weight:800}
+      .pill-sm.good{background:#ecfdf3;color:#047857}
+      .pill-sm.bad{background:#fef2f2;color:#b91c1c}
+      .pill-sm.warning{background:#fffbeb;color:#92400e}
+      .form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+      .span-2{grid-column:1 / -1}
+      .small{font-size:13px;color:var(--muted)}
+      .hint{font-size:13px;color:#64748b;line-height:1.6}
+      .helper-box{padding:14px 16px;border-radius:16px;background:#f8fafc;border:1px solid var(--line);font-size:13px;color:#475569;line-height:1.6}
+      .select{width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:#fff;outline:none}
+      .select:focus{border-color:var(--primary);box-shadow:0 0 0 4px rgba(37,99,235,.10)}
+      .actions{display:flex;gap:10px;flex-wrap:wrap}
+      .searchbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+      .searchbar input{max-width:320px}
+
+      /* Mode Tabs */
+      .mode-tabs{display:flex;gap:8px;border-bottom:2px solid var(--line);padding-bottom:14px}
+      .mode-tab{padding:10px 20px;border-radius:12px;border:1px solid var(--line);background:#fff;cursor:pointer;font-size:14px;font-weight:600;color:#475569;transition:all .15s}
+      .mode-tab.active{background:var(--primary,#2563eb);color:#fff;border-color:var(--primary,#2563eb)}
+      .mode-tab:hover:not(.active){background:#f1f5f9}
+
+      /* Password info box */
+      .pw-safe{padding:14px 16px;border-radius:16px;background:#ecfdf3;border:1px solid #a7f3d0;font-size:13px;color:#065f46;line-height:1.6}
+      .req{color:#dc2626;margin-left:2px}
+
+      @media (max-width: 1100px){.layout{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}}
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <script type="text/x-template" id="users-template">
+      <div class="container">
+        <div class="topbar">
+          <div class="brand">
+            <div class="brand-badge">US</div>
+            <div>
+              <h1>Set Role / Users</h1>
+              <p>Firestore collection <b>users</b> • masteradmin เท่านั้นที่แก้ role ได้</p>
+            </div>
+          </div>
+          <app-tabs :items="navItems" />
+          <a class="btn ghost" href="#" @click.prevent="logout">Logout</a>
+        </div>
+
+        <div class="layout">
+
+          <!-- LEFT: รายชื่อผู้ใช้ -->
+          <section class="card stack">
+            <div class="status-bar" :class="statusType">
+              <div>
+                <p class="status-title">{{ statusTitle }}</p>
+                <p class="status-sub">{{ statusDesc }}</p>
+              </div>
+              <div v-if="loading || saving || creating" class="spinner" style="border-top-color:#2563eb;border-color:#bfdbfe;border-top-color:#2563eb"></div>
+            </div>
+
+            <div class="actions" style="justify-content:space-between;align-items:flex-start">
+              <div>
+                <h2 style="margin:0">รายชื่อผู้ใช้</h2>
+                <p class="small">ดึงจาก Firestore collection <b>users</b> โดยตรง</p>
+              </div>
+              <div class="searchbar">
+                <input v-model="query" type="search" placeholder="ค้นหา email / uid / role" />
+                <button class="btn ghost" @click="reload" :disabled="loading">รีเฟรช</button>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>UID / ชื่อ</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Active</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="u in filteredUsers"
+                    :key="u.uid || u.email"
+                    :class="['click-row', { active: selectedKey === rowKey(u) }]"
+                    @click="pickUser(u)"
+                  >
+                    <td>
+                      <b>{{ u.uid ? u.uid.slice(0,12) + '…' : '-' }}</b>
+                      <div class="small" v-if="u.displayName">{{ u.displayName }}</div>
+                    </td>
+                    <td>{{ u.email || '-' }}</td>
+                    <td><span class="pill-sm" :class="roleClass(u.role)">{{ u.role }}</span></td>
+                    <td><span class="pill-sm" :class="u.active === false ? 'bad' : 'good'">{{ u.active === false ? 'false' : 'true' }}</span></td>
+                  </tr>
+                  <tr v-if="!filteredUsers.length">
+                    <td colspan="4" class="small" style="padding:20px;text-align:center">ไม่พบข้อมูลผู้ใช้ — ลอง <b>สร้าง User ใหม่</b> ทางขวา</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <!-- RIGHT: Edit / Create Panel -->
+          <section class="card stack">
+
+            <!-- Mode Tabs -->
+            <div class="mode-tabs">
+              <button :class="['mode-tab', { active: rightMode === 'edit' }]" @click="switchMode('edit')">✏️ แก้ไข / Role</button>
+              <button :class="['mode-tab', { active: rightMode === 'create' }]" @click="switchMode('create')">➕ สร้าง User ใหม่</button>
+            </div>
+
+            <!-- ===== EDIT MODE ===== -->
+            <template v-if="rightMode === 'edit'">
+              <div>
+                <h2 style="margin:0">แก้ไข role</h2>
+                <p class="small">เลือกแถวทางซ้าย แล้วปรับ role / active / note ได้</p>
+              </div>
+
+              <div class="helper-box">
+                <b>Firestore mapping</b><br />
+                ระบบจะจับผู้ใช้จาก <b>uid</b> ก่อน ถ้าไม่ตรงจะลองจับด้วย <b>email</b> อีกครั้ง
+              </div>
+
+              <div class="form-grid">
+                <div class="field span-2">
+                  <label>UID</label>
+                  <input v-model="form.uid" placeholder="Firebase Auth UID" />
+                </div>
+                <div class="field">
+                  <label>Email</label>
+                  <input v-model="form.email" type="email" placeholder="name@example.com" />
+                </div>
+                <div class="field">
+                  <label>Display name</label>
+                  <input v-model="form.displayName" placeholder="ชื่อที่แสดง" />
+                </div>
+                <div class="field">
+                  <label>Role</label>
+                  <select v-model="form.role" class="select">
+                    <option value="masteradmin">masteradmin</option>
+                    <option value="admin">admin</option>
+                    <option value="user">user</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Active</label>
+                  <select v-model="form.active" class="select">
+                    <option :value="true">true</option>
+                    <option :value="false">false</option>
+                  </select>
+                </div>
+                <div class="field span-2">
+                  <label>Note</label>
+                  <textarea v-model="form.note" placeholder="หมายเหตุเพิ่มเติม"></textarea>
+                </div>
+              </div>
+
+              <div class="actions">
+                <button class="btn primary" @click="save" :disabled="saving">{{ saving ? 'กำลังบันทึก...' : 'บันทึก role' }}</button>
+                <button class="btn ghost" @click="syncCurrentUser" :disabled="saving">ซิงก์ current auth user</button>
+                <button class="btn ghost" @click="newUser">ล้างฟอร์ม</button>
+                <button class="btn danger" @click="remove" :disabled="!selectedKey || saving">ลบ doc นี้</button>
+              </div>
+
+              <div class="hint">
+                <b>🔑 ทำไม Firebase Auth user ไม่ขึ้นในหน้านี้?</b><br />
+                เพราะหน้านี้อ่านจาก <b>Firestore collection "users"</b> เท่านั้น ไม่ใช่จาก Firebase Auth โดยตรง<br />
+                → กด <b>➕ สร้าง User ใหม่</b> เพื่อสร้างบัญชีพร้อม role ได้เลย
+              </div>
+            </template>
+
+            <!-- ===== CREATE MODE ===== -->
+            <template v-else>
+              <div>
+                <h2 style="margin:0">สร้าง User ใหม่</h2>
+                <p class="small">สร้างบัญชีใน <b>Firebase Auth</b> + บันทึก <b>role ลง Firestore</b> พร้อมกัน</p>
+              </div>
+
+              <div class="pw-safe">
+                🔐 <b>Password ปลอดภัย 100%</b><br />
+                Password จะถูกส่งไปที่ <b>Firebase Authentication เท่านั้น</b> — ไม่ถูกเก็บใน Firestore หรือที่ใดเลย<br />
+                masteradmin จะยังคง login อยู่ปกติ (ใช้ REST API ไม่ใช่ SDK signup)
+              </div>
+
+              <div class="form-grid">
+                <div class="field">
+                  <label>Email <span class="req">*</span></label>
+                  <input v-model="createForm.email" type="email" placeholder="user@example.com" autocomplete="off" />
+                </div>
+                <div class="field">
+                  <label>Display Name (ชื่อ)</label>
+                  <input v-model="createForm.displayName" placeholder="ชื่อ-นามสกุล" autocomplete="off" />
+                </div>
+                <div class="field">
+                  <label>Password <span class="req">*</span> <span class="small">(อย่างน้อย 6 ตัว)</span></label>
+                  <input v-model="createForm.password" type="password" placeholder="••••••••" autocomplete="new-password" />
+                </div>
+                <div class="field">
+                  <label>Confirm Password</label>
+                  <input v-model="createForm.confirmPw" type="password" placeholder="พิมพ์อีกครั้ง" autocomplete="new-password" />
+                </div>
+                <div class="field span-2">
+                  <label>Role</label>
+                  <select v-model="createForm.role" class="select">
+                    <option value="user">user — เข้าหน้าเช็กอิน</option>
+                    <option value="admin">admin — เข้าหน้า QR Code / Logs</option>
+                    <option value="masteradmin">masteradmin — เข้าได้ทุกหน้า</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="actions">
+                <button class="btn primary" @click="createNewUser" :disabled="creating">
+                  {{ creating ? 'กำลังสร้าง...' : '➕ สร้าง User' }}
+                </button>
+                <button class="btn ghost" @click="switchMode('edit')" :disabled="creating">ยกเลิก</button>
+              </div>
+
+              <div class="hint">
+                <b>ขั้นตอนที่เกิดขึ้นเมื่อกด สร้าง User:</b><br />
+                1. สร้างบัญชีใน Firebase Authentication (uid + email + password ที่ hash แล้ว)<br />
+                2. บันทึก uid + email + displayName + <b>role</b> ลง Firestore collection users<br />
+                3. Password <b>ไม่ถูกเก็บไว้ที่ Firestore เลย</b> ✅<br /><br />
+                <b>ต้องแก้ Firestore Rules ไหม?</b><br />
+                ถ้า masteradmin เขียน Firestore ได้ปกติ → ไม่ต้องแก้<br />
+                ถ้าพบ error permission-denied → ไปแก้ที่ Firebase Console → Firestore → Rules
+              </div>
+            </template>
+
+          </section>
+        </div>
+      </div>
+    </script>
+
+    <script src="./assets/page-scripts/users.js"></script>
+  </body>
+</html>

@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SetArea</title>
+    <link rel="stylesheet" href="./assets/styles.css" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+    <script src="./assets/firebase-config.js"></script>
+    <script src="./assets/firebase-auth.js"></script>
+    <style>
+      .layout {
+        display: grid;
+        grid-template-columns: 0.98fr 1.02fr;
+        gap: 20px;
+      }
+      .page-subtitle {
+        margin: 4px 0 0;
+        color: #667085;
+      }
+      .status-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 16px;
+        border-radius: 14px;
+        background: #f8fafc;
+        border: 1px solid var(--line);
+      }
+      .status-bar.success {
+        background: #ecfdf3;
+        border-color: #a7f3d0;
+      }
+      .status-bar.loading {
+        background: #eff6ff;
+        border-color: #bfdbfe;
+      }
+      .status-bar.error {
+        background: #fef2f2;
+        border-color: #fecaca;
+      }
+      .status-title {
+        margin: 0;
+        font-weight: 700;
+        color: #0f172a;
+      }
+      .status-sub {
+        margin: 4px 0 0;
+        font-size: 13px;
+        color: #475569;
+        line-height: 1.5;
+      }
+      .spinner {
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(255, 255, 255, 0.35);
+        border-top-color: #fff;
+        border-radius: 50%;
+        display: inline-block;
+        animation: spin 0.8s linear infinite;
+        vertical-align: -2px;
+        margin-right: 8px;
+      }
+      .table-wrap {
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: #fff;
+      }
+      .click-row {
+        cursor: pointer;
+      }
+      .click-row:hover {
+        background: #f8fafc;
+      }
+      .click-row.active {
+        background: #eff6ff;
+      }
+      .pill-sm {
+        display: inline-flex;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: #eff6ff;
+        color: #1d4ed8;
+        font-size: 12px;
+        font-weight: 800;
+      }
+      .map-wrap {
+        height: 520px;
+      }
+      .mini-note {
+        font-size: 13px;
+        color: #64748b;
+        line-height: 1.6;
+      }
+      .field-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .mini-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (max-width: 1100px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+        .map-wrap {
+          height: 360px;
+        }
+        .field-grid,
+        .mini-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <template>
+        <div class="container">
+          <div class="topbar">
+            <div class="brand">
+              <div class="brand-badge">SA</div>
+              <div>
+                <h1>SetArea</h1>
+                <p>ตั้งค่าพื้นที่เช็กอินแบบมีแผนที่และตารางสิทธิ์</p>
+              </div>
+            </div>
+            <app-tabs :items="navItems" />
+          </div>
+
+          <div class="layout">
+            <section class="card stack">
+              <div class="status-bar" :class="statusType">
+                <div>
+                  <p class="status-title">{{ statusTitle }}</p>
+                  <p class="status-sub">{{ statusDesc }}</p>
+                </div>
+                <div v-if="loading || saving" class="spinner"></div>
+              </div>
+
+              <div class="actions">
+                <button class="btn primary" @click="newArea">
+                  + เพิ่มพื้นที่
+                </button>
+                <button class="btn ghost" @click="restoreSelected">
+                  รีโหลดพื้นที่ที่เลือก
+                </button>
+                <button class="btn ghost" @click="save" :disabled="saving">
+                  {{ saving ? 'กำลังบันทึก...' : 'บันทึก' }}
+                </button>
+                <button
+                  class="btn danger"
+                  @click="removeArea"
+                  :disabled="saving"
+                >
+                  ลบพื้นที่
+                </button>
+              </div>
+
+              <div
+                class="card"
+                style="padding: 16px; background: #fafbff; border-style: dashed"
+              >
+                <div class="row">
+                  <span class="pill success">Areas: {{ totalAreas }}</span>
+                  <span class="pill warning">Role: masteradmin</span>
+                </div>
+                <p class="mini-note" style="margin: 10px 0 0">
+                  คลิกชื่อพื้นที่ในตารางเพื่อย้าย marker ไปที่จุดนั้น หรือลาก
+                  marker บนแผนที่เพื่อปรับศูนย์กลางใหม่
+                </p>
+              </div>
+
+              <div>
+                <h2 style="margin: 0 0 8px">ตารางพื้นที่</h2>
+                <div class="table-wrap">
+                  <table class="table">
+                    <thead>
+                      <tr>
+                        <th>พื้นที่</th>
+                        <th>พิกัด</th>
+                        <th>สิทธิ์เห็น</th>
+                        <th>สถานะ</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        v-for="area in areas"
+                        :key="area.areaId"
+                        class="click-row"
+                        :class="{ active: area.areaId === selectedId }"
+                        @click="pickArea(area)"
+                      >
+                        <td>
+                          <b>{{ area.areaName }}</b><br />
+                          <span class="muted small">{{ area.areaId }}</span
+                          ><br />
+                          <span class="muted small"
+                            >{{ area.note || '-' }}</span
+                          >
+                        </td>
+                        <td class="small">
+                          Lat {{ common.formatNumber(area.centerLat) }}<br />
+                          Lng {{ common.formatNumber(area.centerLng) }}<br />
+                          N/S/E/W {{ area.northMeters }}/{{ area.southMeters
+                          }}/{{ area.eastMeters }}/{{ area.westMeters }}
+                        </td>
+                        <td class="small">
+                          Roles: {{ area.visibleRoles || '-' }}<br />
+                          Users: {{ area.visibleUsers || '-' }}
+                        </td>
+                        <td>
+                          <span
+                            class="pill-sm"
+                            :style="{background: area.active === false ? '#fef2f2' : '#ecfdf3', color: area.active === false ? '#b91c1c' : '#047857'}"
+                          >
+                            {{ area.active === false ? 'inactive' : 'active' }}
+                          </span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="card stack">
+              <div>
+                <h2>Map Preview</h2>
+                <p class="page-subtitle">
+                  คลิกในแผนที่เพื่อย้าย marker
+                  หรือเลือกจากตารางเพื่อโฟกัสพื้นที่
+                </p>
+              </div>
+
+              <div class="map-shell">
+                <div class="map-hint">
+                  <div class="map-label">
+                    <b>{{ editing.areaName }}</b><br />
+                    {{ editing.areaId }}
+                  </div>
+                  <div class="row">
+                    <span class="pill success">Draggable marker</span>
+                    <span class="pill warning">Boundary frame</span>
+                  </div>
+                </div>
+                <div class="map-wrap">
+                  <div ref="mapEl" class="map"></div>
+                </div>
+              </div>
+
+              <div
+                class="card"
+                style="padding: 16px; background: #fafbff; border-style: dashed"
+              >
+                <h3 style="margin: 0 0 10px">แก้ไขพื้นที่ที่เลือก</h3>
+                <div class="mini-grid">
+                  <div class="field">
+                    <label>areaId</label>
+                    <input v-model="editing.areaId" />
+                  </div>
+                  <div class="field">
+                    <label>areaName</label>
+                    <input v-model="editing.areaName" />
+                  </div>
+                  <div class="field">
+                    <label>centerLat</label>
+                    <input
+                      v-model.number="editing.centerLat"
+                      type="number"
+                      step="0.000001"
+                    />
+                  </div>
+                  <div class="field">
+                    <label>centerLng</label>
+                    <input
+                      v-model.number="editing.centerLng"
+                      type="number"
+                      step="0.000001"
+                    />
+                  </div>
+                  <div class="field">
+                    <label>northMeters</label>
+                    <input
+                      v-model.number="editing.northMeters"
+                      type="number"
+                      min="0"
+                    />
+                  </div>
+                  <div class="field">
+                    <label>southMeters</label>
+                    <input
+                      v-model.number="editing.southMeters"
+                      type="number"
+                      min="0"
+                    />
+                  </div>
+                  <div class="field">
+                    <label>eastMeters</label>
+                    <input
+                      v-model.number="editing.eastMeters"
+                      type="number"
+                      min="0"
+                    />
+                  </div>
+                  <div class="field">
+                    <label>westMeters</label>
+                    <input
+                      v-model.number="editing.westMeters"
+                      type="number"
+                      min="0"
+                    />
+                  </div>
+                </div>
+
+                <div class="field">
+                  <label>note</label>
+                  <textarea
+                    v-model="editing.note"
+                    placeholder="รายละเอียดพื้นที่"
+                  ></textarea>
+                </div>
+
+                <div class="mini-grid">
+                  <div class="field">
+                    <label>visibleRoles</label>
+                    <input
+                      v-model="editing.visibleRoles"
+                      placeholder="masteradmin,admin,user"
+                    />
+                  </div>
+                  <div class="field">
+                    <label>visibleUsers</label>
+                    <input
+                      v-model="editing.visibleUsers"
+                      placeholder="uid1,uid2 หรือ email"
+                    />
+                  </div>
+                </div>
+
+                <div class="field">
+                  <label>active</label>
+                  <select v-model="editing.active">
+                    <option :value="true">true</option>
+                    <option :value="false">false</option>
+                  </select>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </template>
+    </div>
+    <script src="./assets/common.js"></script>
+    <script src="./assets/components/nav-tabs.js"></script>
+  </body>
+</html>

@@ -1,68 +1,123 @@
-# Farm Chokchai Check-in LIFF Flow v2
+# Farm Chokchai Check-in — Role & Area Setup
 
-โฟลเดอร์นี้แยก flow เป็น 3 หน้า:
+โปรเจกต์นี้แยกเป็น 3 ส่วนหลัก
 
-- `user/checkin.html` = หน้าเช็กอินหลัก
-- `processing.html` = หน้า spinner ตอนบันทึกข้อมูล
-- `success.html` = หน้าแสดงผลสำเร็จ
+1. **Firebase Authentication** สำหรับล็อกอิน
+2. **Firestore collection `users`** สำหรับเก็บ role และสิทธิ์รายคน
+3. **Google Sheet + Apps Script** สำหรับเก็บพื้นที่เช็กอิน, logs และสถานะ geofence
 
-## ข้อมูลที่ส่งไป Google Sheets
-คอลัมน์:
-- `name`
-- `email`
+## หน้าแต่ละส่วน
+
+- `index.html` — หน้าเข้าสู่ระบบ
+- `admin.html` — หน้าดูพื้นที่ทั้งหมด / แผนที่ / ปุ่มไปหน้า QR
+- `qr_code.html` — สร้าง QR ของแต่ละพื้นที่
+- `setarea.html` — หน้า Settings ของพื้นที่แบบมีแผนที่ (ใช้ชื่อ SetArea ให้ชัดเจน)
+- `users.html` — masteradmin ใช้กำหนด role และ assign สิทธิ์รายคน
+- `settings.html` — alias ที่พาไป `setarea.html` เพื่อรองรับลิงก์เก่า
+- `user/checkin.html` — หน้า user เช็กอิน
+- `logs.html` — ดูประวัติการเช็กอิน
+
+## Role matrix
+
+### masteradmin
+- เห็นทุกหน้า
+- เข้า `users.html` ได้
+- เข้า `setarea.html` ได้
+- เห็นพื้นที่ทั้งหมด
+- บันทึกและ assign user/area ได้
+
+### admin
+- เห็นหน้า `admin.html`, `qr_code.html`, `logs.html`
+- เห็นพื้นที่ที่ถูกอนุญาตตาม `visibleRoles` / `visibleUsers`
+- **ไม่เข้า `users.html`**
+- **ไม่เข้า `setarea.html`**
+
+### user
+- เห็นแค่ `user/checkin.html`
+- ใช้เช็กอินตาม area ที่ได้รับสิทธิ์
+
+## การ assign สิทธิ์พื้นที่
+
+ในชีต `Areas` ให้ใช้คอลัมน์เหล่านี้:
+
+- `visibleRoles` — ระบุ role ที่เห็นพื้นที่นี้ เช่น `masteradmin,admin`
+- `visibleUsers` — ระบุ uid หรือ email ที่มองเห็นพื้นที่นี้ เช่น `uid1,uid2` หรือ `name@example.com`
+
+ระบบจะตรวจจาก 2 ช่องนี้ร่วมกัน:
+- ถ้า role ตรงกับ `visibleRoles` จะเห็นพื้นที่
+- ถ้า uid/email ตรงกับ `visibleUsers` จะเห็นพื้นที่
+
+## Schema ที่แนะนำใน Google Sheet
+
+### Sheet: `Areas`
+- `areaId`
+- `areaName`
 - `lat`
 - `lng`
-- `time`
+- `north`
+- `south`
+- `east`
+- `west`
+- `note`
+- `active`
+- `visibleRoles`
+- `visibleUsers`
+- `updatedAt`
+- `updatedBy`
 
-## จุดที่ต้องตั้งค่า
-### assets/common.js
-- ใส่ `API_URL` ของ Apps Script Web App `/exec`
-- ใส่ `LIFF_ID`
+### Sheet: `Users`
+- `email`
+- `uid`
+- `displayName`
+- `role`
+- `active`
+- `visibleAreas`
+- `note`
+- `updatedAt`
+- `updatedBy`
 
-### apps-script/Code.gs
-- ใส่ `SPREADSHEET_ID`
+### Sheet: `Logs`
+- `createdAt`
+- `displayName`
+- `email`
+- `phone`
+- `site`
+- `session`
+- `lat`
+- `lng`
+- `accuracy`
+- `userId`
+- `pictureUrl`
+- `status`
 
-## หมายเหตุเรื่อง LINE
-- LIFF ใช้ `openid` และ `email` scope เพื่ออ่าน email จาก ID token / decoded ID token
-- `profile` ใช้สำหรับ `liff.getProfile()`
+## ต้องแก้ Apps Script ไหม
 
-## วิธีตั้งค่า LIFF
-ให้ชี้ Endpoint URL ไปที่หน้า:
-- `.../user/checkin.html`
+โค้ดชุดนี้ใช้ Apps Script อยู่แล้ว และมี endpoint สำหรับ
+- `areas`
+- `users`
+- `logs`
 
-`success.html` และ `processing.html` เป็นหน้ารองสำหรับ flow หลังจากเช็กอิน
+ดังนั้นโดยปกติ **ไม่ต้องเพิ่ม endpoint ใหม่** ถ้าต้องการแค่:
+- บันทึกพื้นที่
+- บันทึก role / assign user
+- อ่าน logs
 
-## วิธีทำงาน
-1. เปิด `user/checkin.html`
-2. ตรวจพิกัดและเก็บชื่อจาก LINE
-3. ผู้ใช้กรอก email ถ้าจำเป็น
-4. กดเช็กอิน
-5. ไปหน้า `processing.html` พร้อม spinner
-6. บันทึกลง Google Sheets
-7. ไปหน้า `success.html`
+สิ่งที่ควรเช็กคือ:
+1. `SPREADSHEET_ID`
+2. ชื่อชีต `Areas`, `Users`, `Logs`
+3. ให้ Web App ของ Apps Script deploy เรียบร้อย
 
+## สำคัญเรื่องรายชื่อ Firebase Auth ทั้งหมด
 
+หน้าเว็บฝั่ง client **ไม่สามารถดึงรายชื่อ Firebase Authentication users ทั้งหมดได้ตรง ๆ**  
+ถ้าต้องการโชว์รายชื่อ Auth ทั้งระบบจริง ๆ ต้องมี backend เพิ่ม เช่น
+- Cloud Functions
+- Cloud Run
+- หรือ Apps Script ที่ผูก Service Account / Admin SDK
 
-## Troubleshooting login / GPS
-- LIFF ต้องเปิดจาก URL ที่เป็น endpoint จริง และควรเป็น `https` เท่านั้น
-- `navigator.geolocation` ใช้งานได้เฉพาะ secure context (HTTPS)
-- ถ้าเปิดจากไฟล์ local หรือ host ที่ไม่ใช่ HTTPS จะมีโอกาส login / ขอพิกัดไม่ทำงาน
-- ตอนเปิดจาก external browser จะให้ `liff.init({ withLoginOnExternalBrowser: true })` ช่วย auto login ได้
-
-
-## ความเข้ากันได้ของ Google Sheets
-ระบบอ่านได้ทั้ง 2 แบบ:
-- แบบ 6 คอลัมน์: `Name, Email, Phone, Lat, Lng, Time`
-- แบบ 12 คอลัมน์: `createdAt, displayName, email, site, session, lat, lng, accuracy, userId, pictureUrl, status`
-
-ถ้าหน้า Logs ขึ้นว่าง ให้ลองแท็บ `ทั้งหมด` ก่อน เพราะเวอร์ชันนี้จะไม่กรองทิ้งเพราะอ่านคอลัมน์ผิดรูปแบบอีกแล้ว
+แต่ถ้าใช้ตามโครงนี้ แนะนำให้จัดการรายชื่อผู้ใช้ใน Firestore `users` เป็นหลัก
 
 
-## Logs page update
-- หน้า Logs เปิดที่แท็บ `วันนี้` เป็นค่าเริ่มต้น
-- โหลดข้อมูลครั้งละ 15 รายการ และจะโหลดเพิ่มอัตโนมัติเมื่อเลื่อนลง
-- Export CSV จะออกตามตัวกรองที่เลือก และคงเวลาเดิมตามที่เก็บในชีต
+## Tab component
 
-## Setup Apps Script
-- Code อยู่ที่ folder apps-script/Code.gs
-- นำ Code ทั้งหมดนี้ Copy วางเข้า Apps Script ชื่อ file Code.gs ได้เลย
+หน้า admin / users / logs / qr_code / setarea ใช้ component `app-tabs` ร่วมกันเพื่อให้ tab หน้าตาและพฤติกรรมตรงกันทุกหน้า
