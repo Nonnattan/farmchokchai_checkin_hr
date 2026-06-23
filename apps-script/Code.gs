@@ -1,6 +1,7 @@
 const SPREADSHEET_ID = "1VxuvC0OwqQ_wlsQsjFq3y3XiTeh_CBCKXOf1iz_fGf4";
 const LOGS_SHEET_NAME = "Logs";
-const AREAS_SHEET_NAME = "location";
+const AREAS_SHEET_NAME = "location"; // legacy sheet name kept for compatibility
+const AREA_ASSIGNMENTS_SHEET_NAME = "AreaAssignments";
 const USERS_SHEET_NAME = "Users";
 const BANGKOK_TZ = "Asia/Bangkok";
 
@@ -19,9 +20,9 @@ const LOG_HEADERS = [
   "status",
 ];
 
+// Legacy schema used by the existing spreadsheet screenshot.
+// Keep this order so the sheet stays familiar.
 const AREA_HEADERS = [
-  "areaId",
-  "areaName",
   "lat",
   "lng",
   "north",
@@ -31,7 +32,17 @@ const AREA_HEADERS = [
   "remark",
   "assign",
   "email",
+  "qr_code",
+];
+
+const AREA_ASSIGNMENT_HEADERS = [
+  "qr_code",
+  "email",
+  "uid",
+  "role",
+  "displayName",
   "active",
+  "createdAt",
   "updatedAt",
   "updatedBy",
 ];
@@ -58,7 +69,7 @@ const DEFAULT_AREA = {
   east: 80,
   west: 50,
   remark: "พื้นที่เริ่มต้นสำหรับเช็กอิน",
-  assign: "masteradmin,admin",
+  assign: "masteradmin,admin,user",
   email: "",
   active: true,
   updatedAt: "",
@@ -128,66 +139,133 @@ function parsePayload(e) {
 function getAreasResponse() {
   const ss = openSpreadsheet();
   const sheet = getOrCreateAreasSheet(ss);
-  const list = readObjectsFromSheet(sheet, AREA_HEADERS)
+  const list = readObjectsFromSheet(sheet)
     .map(normalizeArea)
     .filter(Boolean);
 
-  if (!list.length) {
-    return { ok: true, data: [DEFAULT_AREA] };
+  const assignments = readAreaAssignments(ss);
+  const merged = mergeAssignmentsIntoAreas(list, assignments);
+
+  if (!merged.length) {
+    return { ok: true, data: [normalizeArea(DEFAULT_AREA)] };
   }
 
-  return { ok: true, data: list };
+  return { ok: true, data: merged };
+}
+
+function buildAreaId(area) {
+  const sourceText = String(
+    area?.areaId || area?.areaName || area?.remark || DEFAULT_AREA.areaName,
+  ).trim();
+  const base = sourceText
+    .toLowerCase()
+    .replace(/['"]/g, "")
+    .replace(/[^a-z0-9ก-๙]+/gi, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 32) || "area";
+  const stamp = Utilities.formatDate(new Date(), BANGKOK_TZ, "yyyyMMddHHmmss");
+  return `${base}-${stamp}`;
 }
 
 function saveArea(payload) {
   const ss = openSpreadsheet();
   const sheet = getOrCreateAreasSheet(ss);
-  const all = readObjectsFromSheet(sheet, AREA_HEADERS)
+  const all = readObjectsFromSheet(sheet)
     .map(normalizeArea)
     .filter(Boolean);
-  const incoming = normalizeArea(payload);
+
+  const requestedAreaId = String(payload.areaId || "").trim();
+  const originalId = String(
+    payload.originalAreaId || payload.previousAreaId || requestedAreaId,
+  ).trim();
+
+  let incoming = normalizeArea(payload);
   const now = formatBangkokDateTime(new Date());
-  incoming.updatedAt = now;
-  incoming.updatedBy = String(
+  const updatedBy = String(
     payload.updatedBy || payload.userId || payload.email || "",
   ).trim();
 
+  const isCreate = !originalId;
+  if (!requestedAreaId || (isCreate && requestedAreaId === DEFAULT_AREA.areaId)) {
+    incoming.areaId = buildAreaId(incoming);
+  }
+  if (isCreate && (!String(payload.areaName || "").trim())) {
+    incoming.areaName = incoming.areaId;
+  } else if (!String(incoming.areaName || "").trim()) {
+    incoming.areaName = incoming.remark || incoming.areaId || DEFAULT_AREA.areaName;
+  }
+
+  incoming.updatedAt = now;
+  incoming.updatedBy = updatedBy;
+
   if (String(payload.actionType || "").toLowerCase() === "delete") {
-    const idx = all.findIndex(
-      (a) => String(a.areaId) === String(incoming.areaId),
-    );
+    const idToDelete = String(
+      payload.originalAreaId || payload.previousAreaId || incoming.areaId,
+    ).trim();
+    const idx = all.findIndex((a) => String(a.areaId) === idToDelete);
     if (idx >= 0) {
       all.splice(idx, 1);
       writeAreaObjects(sheet, all);
     }
+    removeAreaAssignments(ss, idToDelete);
     SpreadsheetApp.flush();
-    return { ok: true, message: "ลบพื้นที่แล้ว", data: all };
+    return { ok: true, message: "ลบพื้นที่แล้ว", data: mergeAssignmentsIntoAreas(all, readAreaAssignments(ss)) };
   }
 
-  const idx = all.findIndex(
-    (a) => String(a.areaId) === String(incoming.areaId),
-  );
+  let idx = all.findIndex((a) => String(a.areaId) === originalId);
+  if (idx < 0 && originalId !== String(incoming.areaId)) {
+    idx = all.findIndex((a) => String(a.areaId) === String(incoming.areaId));
+  }
+
   if (idx >= 0) all[idx] = incoming;
   else all.unshift(incoming);
 
   writeAreaObjects(sheet, all);
+  syncAreaAssignments(ss, incoming, payload, originalId);
+
   SpreadsheetApp.flush();
-  return { ok: true, message: "บันทึกพื้นที่สำเร็จ", data: all };
+  const assignments = readAreaAssignments(ss);
+  return {
+    ok: true,
+    message: "บันทึกพื้นที่สำเร็จ",
+    data: mergeAssignmentsIntoAreas(all, assignments),
+  };
 }
 
 function normalizeArea(raw) {
   const source = raw || {};
-  return {
-    areaId:
-      String(source.areaId || source.id || DEFAULT_AREA.areaId).trim() ||
+  const areaId = String(
+    source.areaId ||
+      source.qr_code ||
+      source.id ||
+      source.code ||
+      source.siteId ||
+      source.site ||
       DEFAULT_AREA.areaId,
-    areaName:
-      String(
-        source.areaName ||
-          source.siteName ||
-          source.site ||
-          DEFAULT_AREA.areaName,
-      ).trim() || DEFAULT_AREA.areaName,
+  ).trim() || DEFAULT_AREA.areaId;
+
+  const areaName = String(
+    source.areaName ||
+      source.siteName ||
+      source.site ||
+      source.remark ||
+      source.note ||
+      source.qr_code ||
+      "",
+  ).trim();
+
+  const remark = String(source.remark ?? source.note ?? source.areaName ?? source.siteName ?? source.site ?? source.qr_code ?? "").trim();
+  const visibleRoles = String(
+    source.visibleRoles ?? source.assign ?? DEFAULT_AREA.assign,
+  ).trim() || DEFAULT_AREA.assign;
+  const visibleUsers = String(
+    source.visibleUsers ?? source.email ?? source.allowedUsers ?? "",
+  ).trim();
+
+  return {
+    areaId,
+    areaName: areaName || remark || areaId || DEFAULT_AREA.areaName,
     lat: toNumberOr(source.lat ?? source.centerLat, DEFAULT_AREA.lat),
     lng: toNumberOr(source.lng ?? source.centerLng, DEFAULT_AREA.lng),
     north: Math.max(
@@ -206,13 +284,11 @@ function normalizeArea(raw) {
       0,
       toNumberOr(source.west ?? source.westMeters, DEFAULT_AREA.west),
     ),
-    remark:
-      String(source.remark ?? source.note ?? DEFAULT_AREA.remark).trim() ||
-      DEFAULT_AREA.remark,
-    assign: String(
-      source.assign ?? source.visibleRoles ?? DEFAULT_AREA.assign,
-    ).trim(),
-    email: String(source.email ?? source.visibleUsers ?? "").trim(),
+    remark,
+    assign: visibleRoles,
+    email: visibleUsers,
+    visibleRoles,
+    visibleUsers,
     active:
       source.active === false || String(source.active).toLowerCase() === "false"
         ? false
@@ -227,8 +303,6 @@ function writeAreaObjects(sheet, list) {
   list.forEach((area) => {
     const n = normalizeArea(area);
     rows.push([
-      n.areaId || "",
-      n.areaName || "",
       n.lat,
       n.lng,
       n.north,
@@ -238,9 +312,7 @@ function writeAreaObjects(sheet, list) {
       n.remark || "",
       n.assign || "",
       n.email || "",
-      n.active !== false,
-      n.updatedAt || "",
-      n.updatedBy || "",
+      n.areaId || "",
     ]);
   });
 
@@ -253,6 +325,165 @@ function getOrCreateAreasSheet(ss) {
   if (!sheet) sheet = ss.getSheetByName("Areas");
   if (!sheet) sheet = ss.insertSheet(AREAS_SHEET_NAME);
   ensureHeaderRow(sheet, AREA_HEADERS);
+  return sheet;
+}
+
+function readAreaAssignments(ss) {
+  const sheet = getOrCreateAreaAssignmentsSheet(ss);
+  const rows = readObjectsFromSheet(sheet)
+    .map((row) => ({
+      areaId: String(row.qr_code || row.areaId || "").trim(),
+      email: String(row.email || row.userEmail || "").trim().toLowerCase(),
+      uid: String(row.uid || row.userId || "").trim(),
+      role: String(row.role || "").trim().toLowerCase(),
+      displayName: String(row.displayName || row.name || "").trim(),
+      active:
+        row.active === false || String(row.active).toLowerCase() === "false"
+          ? false
+          : true,
+      createdAt: String(row.createdAt || "").trim(),
+      updatedAt: String(row.updatedAt || "").trim(),
+      updatedBy: String(row.updatedBy || "").trim(),
+    }))
+    .filter((row) => row.areaId && row.email);
+  return rows;
+}
+
+function syncAreaAssignments(ss, area, payload, originalAreaId) {
+  const sheet = getOrCreateAreaAssignmentsSheet(ss);
+  const all = readAreaAssignments(ss);
+  const areaId = String(area.areaId || "").trim();
+  const now = formatBangkokDateTime(new Date());
+  const updatedBy = String(
+    payload.updatedBy || payload.userId || payload.email || "",
+  ).trim();
+
+  const assignees = normalizeAssigneeList(payload, area);
+  const idsToRemove = uniqueList([originalAreaId, areaId].map((v) => String(v || "").trim()).filter(Boolean));
+  const retained = all.filter((row) => !idsToRemove.includes(String(row.areaId)));
+  const existingByKey = new Map();
+  all.forEach((row) => {
+    const key = `${String(row.areaId).trim()}||${String(row.email).trim().toLowerCase()}`;
+    existingByKey.set(key, row);
+  });
+
+  const nextRows = assignees.map((user) => {
+    const email = String(user.email || "").trim().toLowerCase();
+    const key = `${areaId}||${email}`;
+    const previous = existingByKey.get(key) || {};
+    return {
+      areaId,
+      email,
+      uid: String(user.uid || previous.uid || "").trim(),
+      role: String(user.role || previous.role || "").trim().toLowerCase(),
+      displayName: String(user.displayName || previous.displayName || "").trim(),
+      active:
+        user.active === false || String(user.active).toLowerCase() === "false"
+          ? false
+          : true,
+      createdAt: String(previous.createdAt || now).trim(),
+      updatedAt: now,
+      updatedBy,
+    };
+  });
+
+  writeAreaAssignmentObjects(sheet, [...retained, ...nextRows]);
+}
+
+function normalizeAssigneeList(payload, area) {
+  const assignees = Array.isArray(payload?.assignees) ? payload.assignees : [];
+  if (assignees.length) {
+    return assignees
+      .map((item) => ({
+        email: String(item?.email || item?.userEmail || "").trim().toLowerCase(),
+        uid: String(item?.uid || item?.userId || "").trim(),
+        role: String(item?.role || "").trim().toLowerCase(),
+        displayName: String(item?.displayName || item?.name || "").trim(),
+        active:
+          item?.active === false || String(item?.active).toLowerCase() === "false"
+            ? false
+            : true,
+      }))
+      .filter((item) => item.email);
+  }
+
+  const emails = splitList(
+    payload.visibleUsers ||
+      payload.email ||
+      area.visibleUsers ||
+      area.email ||
+      "",
+  ).map((email) => ({
+    email: String(email || "").trim().toLowerCase(),
+    uid: "",
+    role: "",
+    displayName: "",
+    active: true,
+  }));
+
+  return emails.filter((item) => item.email);
+}
+
+function removeAreaAssignments(ss, areaId) {
+  const sheet = getOrCreateAreaAssignmentsSheet(ss);
+  const all = readAreaAssignments(ss).filter((row) => String(row.areaId) !== String(areaId));
+  writeAreaAssignmentObjects(sheet, all);
+}
+
+function mergeAssignmentsIntoAreas(areas, assignments) {
+  const byArea = new Map();
+  assignments.forEach((row) => {
+    const id = String(row.areaId || "").trim();
+    const email = String(row.email || "").trim().toLowerCase();
+    if (!id || !email) return;
+    if (!byArea.has(id)) byArea.set(id, []);
+    byArea.get(id).push(row);
+  });
+
+  return areas.map((area) => {
+    const normalized = normalizeArea(area);
+    const fromSheet = splitList(normalized.visibleUsers || normalized.email || "");
+    const fromAssignments = (byArea.get(String(normalized.areaId)) || []).map((row) => row.email);
+    const mergedEmails = uniqueList([...fromSheet, ...fromAssignments]);
+
+    const roleText = String(normalized.visibleRoles || normalized.assign || "").trim();
+    return {
+      ...normalized,
+      assign: roleText,
+      visibleRoles: roleText,
+      email: mergedEmails.join(","),
+      visibleUsers: mergedEmails.join(","),
+    };
+  });
+}
+
+function writeAreaAssignmentObjects(sheet, list) {
+  const rows = [AREA_ASSIGNMENT_HEADERS];
+  list.forEach((row) => {
+    const areaId = String(row.areaId || "").trim();
+    const email = String(row.email || "").trim().toLowerCase();
+    if (!areaId || !email) return;
+    rows.push([
+      areaId,
+      email,
+      String(row.uid || "").trim(),
+      String(row.role || "").trim().toLowerCase(),
+      String(row.displayName || "").trim(),
+      row.active !== false,
+      String(row.createdAt || "").trim(),
+      String(row.updatedAt || "").trim(),
+      String(row.updatedBy || "").trim(),
+    ]);
+  });
+
+  sheet.clearContents();
+  sheet.getRange(1, 1, rows.length, AREA_ASSIGNMENT_HEADERS.length).setValues(rows);
+}
+
+function getOrCreateAreaAssignmentsSheet(ss) {
+  let sheet = ss.getSheetByName(AREA_ASSIGNMENTS_SHEET_NAME);
+  if (!sheet) sheet = ss.insertSheet(AREA_ASSIGNMENTS_SHEET_NAME);
+  ensureHeaderRow(sheet, AREA_ASSIGNMENT_HEADERS);
   return sheet;
 }
 
@@ -313,7 +544,7 @@ function saveLog(payload) {
 function getLogsResponse(params) {
   const ss = openSpreadsheet();
   const sheet = getOrCreateLogsSheet(ss);
-  const list = readObjectsFromSheet(sheet, LOG_HEADERS);
+  const list = readObjectsFromSheet(sheet);
 
   const limit = Math.max(1, toInt(params.limit || 200, 200));
   return { ok: true, data: list.slice(-limit).reverse() };
@@ -350,7 +581,7 @@ function buildLogWriteRow(headers, obj) {
 function getUsersResponse(params) {
   const ss = openSpreadsheet();
   const sheet = getOrCreateUsersSheet(ss);
-  const list = readObjectsFromSheet(sheet, USER_HEADERS)
+  const list = readObjectsFromSheet(sheet)
     .map(normalizeUser)
     .filter(Boolean);
 
@@ -394,7 +625,7 @@ function getUsersResponse(params) {
 function saveUser(payload) {
   const ss = openSpreadsheet();
   const sheet = getOrCreateUsersSheet(ss);
-  const all = readObjectsFromSheet(sheet, USER_HEADERS)
+  const all = readObjectsFromSheet(sheet)
     .map(normalizeUser)
     .filter(Boolean);
   const incoming = normalizeUser(payload);
@@ -521,11 +752,13 @@ function getHeaderRow(sheet) {
     .map((v) => String(v || "").trim());
 }
 
-function readObjectsFromSheet(sheet, headers) {
-  const values = sheet.getDataRange().getValues();
-  if (!values || values.length < 2) return [];
+function readObjectsFromSheet(sheet) {
+  const lastRow = sheet.getLastRow();
+  const lastCol = Math.max(sheet.getLastColumn(), 1);
+  if (lastRow < 2) return [];
+  const headers = getHeaderRow(sheet);
+  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   return values
-    .slice(1)
     .map((row) => rowToObject(headers, row))
     .filter((obj) =>
       Object.values(obj).some((v) => String(v ?? "").trim() !== ""),
@@ -545,6 +778,18 @@ function splitList(value) {
     .split(/[,\n]/)
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+function uniqueList(list) {
+  const seen = new Set();
+  const result = [];
+  list.forEach((item) => {
+    const key = String(item || "").trim().toLowerCase();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    result.push(String(item || "").trim());
+  });
+  return result;
 }
 
 function toNumberOr(value, fallback) {

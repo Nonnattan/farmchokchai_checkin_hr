@@ -13,9 +13,14 @@
     />
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+    <script src="./assets/firebase-config.js"></script>
 
     <script src="./assets/common.js"></script>
     <script src="./assets/components/nav-tabs.js"></script>
+    <script src="./assets/firebase-auth.js"></script>
     <script defer src="./assets/page-scripts/setarea.js"></script>
 
     <style>
@@ -248,6 +253,86 @@
         margin: 10px 0 0;
       }
 
+      .assign-select {
+        min-height: 220px;
+        width: 100%;
+      }
+
+      .assign-help {
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.5;
+        margin: 8px 0 0;
+      }
+
+      .assign-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .assign-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 10px;
+        margin-top: 10px;
+      }
+
+      .assign-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: #fff;
+        transition: border-color .15s ease, background .15s ease, transform .15s ease;
+        cursor: pointer;
+      }
+
+      .assign-item:hover {
+        transform: translateY(-1px);
+      }
+
+      .assign-item.selected {
+        background: #eff6ff;
+        border-color: #bfdbfe;
+      }
+
+      .assign-item input {
+        margin-top: 4px;
+        transform: scale(1.05);
+      }
+
+      .assign-item .meta {
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.45;
+      }
+
+      .assign-empty {
+        padding: 14px;
+        border: 1px dashed #cbd5e1;
+        border-radius: 16px;
+        background: #f8fafc;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .assign-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .assign-meta {
+        margin-top: 8px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
       .table-wrap {
         overflow: auto;
         border: 1px solid var(--line);
@@ -436,8 +521,7 @@
           <div>
             <h1>SetArea</h1>
             <p>
-              ตั้งค่าพื้นที่เช็กอินด้วยแผนที่ และกำหนดสิทธิ์การมองเห็นใน Google
-              Sheet
+              ตั้งค่าพื้นที่เช็กอินด้วยแผนที่ กำหนด role ที่มองเห็นพื้นที่ และเลือก admin/masteradmin จาก Firestore users ได้
             </p>
           </div>
         </div>
@@ -573,7 +657,7 @@
 
             <div class="field-grid">
               <div class="field">
-                <label>areaId</label>
+                <label>qr_code / areaId</label>
                 <input v-model="editing.areaId" placeholder="qr_code" />
               </div>
               <div class="field">
@@ -632,13 +716,44 @@
                   v-model="editing.assign"
                   placeholder="masteradmin,admin"
                 />
+                <div class="assign-help">role นี้ใช้ควบคุมว่าใครเห็นพื้นที่นี้ในหน้าเช็กอิน</div>
               </div>
               <div class="field">
-                <label>email</label>
+                <label>email (checkbox เลือกได้เฉพาะ admin / masteradmin)</label>
                 <input
-                  v-model="editing.email"
-                  placeholder="admin1@gmail.com,admin2@gmail.com"
+                  v-model="assignSearch"
+                  placeholder="ค้นหาอีเมลหรือชื่อเพื่อกรองรายชื่อ"
                 />
+                <div class="assign-toolbar">
+                  <button class="btn ghost" type="button" @click="selectAllAssignableUsers">เลือกทั้งหมด</button>
+                  <button class="btn ghost" type="button" @click="clearAssignees">ล้างทั้งหมด</button>
+                  <button class="btn ghost" type="button" @click="loadAssignableUsers">รีเฟรชรายชื่อ</button>
+                </div>
+
+                <div v-if="filteredAssignableUsers.length" class="assign-list">
+                  <label
+                    v-for="u in filteredAssignableUsers"
+                    :key="u.uid || u.email"
+                    :class="['assign-item', { selected: isAssigneeSelected(u.email) }]"
+                  >
+                    <input
+                      type="checkbox"
+                      :checked="isAssigneeSelected(u.email)"
+                      @change="toggleAssignee(u.email, $event.target.checked)"
+                    />
+                    <div>
+                      <div><b>{{ u.email }}</b></div>
+                      <div class="meta">{{ u.displayName || u.uid || '-' }} • {{ u.role }}</div>
+                    </div>
+                  </label>
+                </div>
+
+                <div v-else class="assign-empty">
+                  ไม่พบรายชื่อ admin/masteradmin จาก Firestore users
+                </div>
+
+                <div class="assign-meta">เลือกแล้ว {{ selectedAssigneeEmails.length }} คน</div>
+                <div class="assign-help">ระบบจะบันทึกเป็น many-to-many ลงชีต AreaAssignments และเก็บรายการรวมไว้ที่คอลัมน์ email ของชีตพื้นที่</div>
               </div>
             </div>
 

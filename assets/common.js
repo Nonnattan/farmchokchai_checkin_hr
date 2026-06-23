@@ -3,12 +3,12 @@
   const PENDING_KEY = "pending_checkin_payload";
   const LAST_CHECKIN_KEY = "last_checkin";
   const AREA_CACHE_KEY = "checkin_area_cache";
-  const API_URL = "https://script.google.com/macros/s/AKfycbwUT1MvrVWxLilbeP2lJgmsgeHelMk7oim7ruTX59v9TPyX31vZngta3rmrArZkJE0/exec";
+  const API_URL = "https://script.google.com/macros/s/AKfycbyU0MchhC88K1UXTDmzTleaHZITf8-2IVF3UNZmeBnRzkBkyUzEUjzkwI53H9Ttjgnf/exec";
   const LIFF_ID = "2008594376-hmZ7K2H2";
 
   const DEFAULT_AREA = {
-    areaId: "default",
-    areaName: "Check-in Zone",
+    areaId: "qr_code",
+    areaName: "qr_code",
     centerLat: 13.968639,
     centerLng: 100.619861,
     northMeters: 50,
@@ -69,9 +69,30 @@
 
   function normalizeArea(raw) {
     const source = raw || {};
+    const areaId = String(
+      source.areaId ||
+      source.qr_code ||
+      source.id ||
+      source.code ||
+      source.siteId ||
+      source.site ||
+      "qr_code",
+    ).trim() || "qr_code";
+
+    const areaName = String(
+      source.areaName ||
+      source.siteName ||
+      source.site ||
+      source.remark ||
+      source.note ||
+      source.qr_code ||
+      readSiteName() ||
+      DEFAULT_AREA.areaName,
+    ).trim() || DEFAULT_AREA.areaName;
+
     return {
-      areaId: String(source.areaId || source.id || "default").trim() || "default",
-      areaName: String(source.areaName || source.siteName || source.site || readSiteName() || DEFAULT_AREA.areaName).trim() || DEFAULT_AREA.areaName,
+      areaId,
+      areaName,
       centerLat: toNumberOr(source.centerLat ?? source.lat, DEFAULT_AREA.centerLat),
       centerLng: toNumberOr(source.centerLng ?? source.lng, DEFAULT_AREA.centerLng),
       northMeters: Math.max(0, toNumberOr(source.northMeters ?? source.north, DEFAULT_AREA.northMeters)),
@@ -80,8 +101,12 @@
       westMeters: Math.max(0, toNumberOr(source.westMeters ?? source.west, DEFAULT_AREA.westMeters)),
       note: String(source.note ?? source.remark ?? DEFAULT_AREA.note).trim() || DEFAULT_AREA.note,
       active: source.active === false ? false : true,
-      visibleRoles: String(source.visibleRoles ?? DEFAULT_AREA.visibleRoles).trim() || DEFAULT_AREA.visibleRoles,
-      visibleUsers: String(source.visibleUsers ?? source.allowedUsers ?? "").trim(),
+      visibleRoles: String(source.visibleRoles ?? source.assign ?? DEFAULT_AREA.visibleRoles).trim() || DEFAULT_AREA.visibleRoles,
+      visibleUsers: String(source.visibleUsers ?? source.email ?? source.allowedUsers ?? "").trim(),
+      assign: String(source.assign ?? source.visibleRoles ?? DEFAULT_AREA.visibleRoles).trim() || DEFAULT_AREA.visibleRoles,
+      email: String(source.email ?? source.visibleUsers ?? source.allowedUsers ?? "").trim(),
+      updatedAt: String(source.updatedAt || "").trim(),
+      updatedBy: String(source.updatedBy || "").trim(),
     };
   }
 
@@ -176,8 +201,10 @@
 
   async function saveArea(area, timeoutMs = 20000) {
     const normalized = normalizeArea(area);
-    writeSiteName(normalized.areaName);
-    const data = await requestJson("areas", normalized, "POST", timeoutMs);
+    const data = await requestJson("areas", {
+      ...normalized,
+      originalAreaId: String(area?.originalAreaId || area?.previousAreaId || normalized.areaId || "").trim(),
+    }, "POST", timeoutMs);
     cacheAreas(normalizeAreaList(data?.data || data?.areas || [normalized]));
     return normalized;
   }
