@@ -28,10 +28,10 @@ const AREA_HEADERS = [
   "south",
   "east",
   "west",
-  "note",
+  "remark",
+  "assign",
+  "email",
   "active",
-  "visibleRoles",
-  "visibleUsers",
   "updatedAt",
   "updatedBy",
 ];
@@ -49,27 +49,39 @@ const USER_HEADERS = [
 ];
 
 const DEFAULT_AREA = {
-  areaId: "default",
-  areaName: "Check-in Zone",
+  areaId: "qr_code",
+  areaName: "qr_code",
   lat: 13.968639,
   lng: 100.619861,
   north: 50,
   south: 50,
   east: 80,
   west: 50,
-  note: "อยู่ในกรอบสี่เหลี่ยมนี้เท่านั้นจึงจะเช็กอินได้",
+  remark: "พื้นที่เริ่มต้นสำหรับเช็กอิน",
+  assign: "masteradmin,admin",
+  email: "",
   active: true,
-  visibleRoles: "masteradmin,admin,user",
-  visibleUsers: "",
+  updatedAt: "",
+  updatedBy: "",
 };
 
 function doGet(e) {
   try {
     const params = e && e.parameter ? e.parameter : {};
     const action = String(params.action || "areas").toLowerCase();
-    if (action === "areas" || action === "location") return jsonOutput(getAreasResponse());
-    if (action === "logs") return jsonOutput(getLogsResponse(params));
-    if (action === "users") return jsonOutput(getUsersResponse(params));
+
+    if (action === "areas" || action === "location") {
+      return jsonOutput(getAreasResponse());
+    }
+
+    if (action === "logs") {
+      return jsonOutput(getLogsResponse(params));
+    }
+
+    if (action === "users") {
+      return jsonOutput(getUsersResponse(params));
+    }
+
     return jsonOutput({ ok: false, error: "unknown_action" });
   } catch (err) {
     return jsonOutput({ ok: false, error: err.message || String(err) });
@@ -80,9 +92,19 @@ function doPost(e) {
   try {
     const payload = parsePayload(e);
     const action = String(payload.action || payload.type || "").toLowerCase();
-    if (action === "areas" || action === "location") return jsonOutput(saveArea(payload));
-    if (action === "logs") return jsonOutput(saveLog(payload));
-    if (action === "users") return jsonOutput(saveUser(payload));
+
+    if (action === "areas" || action === "location") {
+      return jsonOutput(saveArea(payload));
+    }
+
+    if (action === "logs") {
+      return jsonOutput(saveLog(payload));
+    }
+
+    if (action === "users") {
+      return jsonOutput(saveUser(payload));
+    }
+
     return jsonOutput({ ok: false, error: "unknown_action" });
   } catch (err) {
     return jsonOutput({ ok: false, error: err.message || String(err) });
@@ -101,75 +123,50 @@ function parsePayload(e) {
   return typeof e.parameter === "object" ? e.parameter : {};
 }
 
-function saveLog(payload) {
-  const ss = openSpreadsheet();
-  const sheet = getOrCreateLogsSheet(ss);
-
-  const createdAtRaw = payload.createdAt || payload.time || new Date().toISOString();
-  const createdAt = parseToDate(createdAtRaw);
-  if (!createdAt) throw new Error("time is invalid");
-
-  const createdAtDisplay = formatBangkokDateTime(createdAt);
-  const displayName = String(payload.displayName || payload.name || "-").trim() || "-";
-  const email = String(payload.email || "").trim();
-  const phone = "";
-  const site = String(payload.site || payload.siteName || "Check-in Zone").trim();
-  const session = String(payload.session || "").trim();
-  const userId = String(payload.userId || "").trim();
-  const pictureUrl = String(payload.pictureUrl || "").trim();
-  const status = String(payload.status || "checked_in").trim();
-  const lat = Number(payload.lat);
-  const lng = Number(payload.lng);
-  const accuracy = payload.accuracy !== undefined ? Number(payload.accuracy) : "";
-
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error("lat/lng is required");
-
-  const headers = getHeaderRow(sheet);
-  const row = buildLogWriteRow(headers, {
-    createdAtDisplay, displayName, email, phone, site, session, lat, lng, accuracy, userId, pictureUrl, status,
-  });
-
-  sheet.appendRow(row);
-  SpreadsheetApp.flush();
-
-  return { ok: true, message: "บันทึกข้อมูลสำเร็จ", time: createdAtDisplay };
-}
+/* ---------------- Areas ---------------- */
 
 function getAreasResponse() {
   const ss = openSpreadsheet();
   const sheet = getOrCreateAreasSheet(ss);
-  const values = sheet.getDataRange().getValues();
-  if (!values || values.length < 2) {
+  const list = readObjectsFromSheet(sheet, AREA_HEADERS)
+    .map(normalizeArea)
+    .filter(Boolean);
+
+  if (!list.length) {
     return { ok: true, data: [DEFAULT_AREA] };
   }
 
-  const rows = values.slice(1).map((row) => {
-    const obj = rowToObject(AREA_HEADERS, row);
-    return normalizeArea(obj);
-  }).filter(Boolean);
-
-  return { ok: true, data: rows.length ? rows : [DEFAULT_AREA] };
+  return { ok: true, data: list };
 }
 
 function saveArea(payload) {
   const ss = openSpreadsheet();
   const sheet = getOrCreateAreasSheet(ss);
-  const areas = getAreasResponse().data || [];
+  const all = readObjectsFromSheet(sheet, AREA_HEADERS)
+    .map(normalizeArea)
+    .filter(Boolean);
   const incoming = normalizeArea(payload);
   const now = formatBangkokDateTime(new Date());
   incoming.updatedAt = now;
-  incoming.updatedBy = String(payload.updatedBy || payload.userId || payload.email || "").trim();
+  incoming.updatedBy = String(
+    payload.updatedBy || payload.userId || payload.email || "",
+  ).trim();
 
-  const all = readSheetAsObjects(sheet, AREA_HEADERS);
-  const idx = all.findIndex((a) => String(a.areaId) === String(incoming.areaId));
   if (String(payload.actionType || "").toLowerCase() === "delete") {
+    const idx = all.findIndex(
+      (a) => String(a.areaId) === String(incoming.areaId),
+    );
     if (idx >= 0) {
       all.splice(idx, 1);
       writeAreaObjects(sheet, all);
     }
+    SpreadsheetApp.flush();
     return { ok: true, message: "ลบพื้นที่แล้ว", data: all };
   }
 
+  const idx = all.findIndex(
+    (a) => String(a.areaId) === String(incoming.areaId),
+  );
   if (idx >= 0) all[idx] = incoming;
   else all.unshift(incoming);
 
@@ -178,20 +175,206 @@ function saveArea(payload) {
   return { ok: true, message: "บันทึกพื้นที่สำเร็จ", data: all };
 }
 
+function normalizeArea(raw) {
+  const source = raw || {};
+  return {
+    areaId:
+      String(source.areaId || source.id || DEFAULT_AREA.areaId).trim() ||
+      DEFAULT_AREA.areaId,
+    areaName:
+      String(
+        source.areaName ||
+          source.siteName ||
+          source.site ||
+          DEFAULT_AREA.areaName,
+      ).trim() || DEFAULT_AREA.areaName,
+    lat: toNumberOr(source.lat ?? source.centerLat, DEFAULT_AREA.lat),
+    lng: toNumberOr(source.lng ?? source.centerLng, DEFAULT_AREA.lng),
+    north: Math.max(
+      0,
+      toNumberOr(source.north ?? source.northMeters, DEFAULT_AREA.north),
+    ),
+    south: Math.max(
+      0,
+      toNumberOr(source.south ?? source.southMeters, DEFAULT_AREA.south),
+    ),
+    east: Math.max(
+      0,
+      toNumberOr(source.east ?? source.eastMeters, DEFAULT_AREA.east),
+    ),
+    west: Math.max(
+      0,
+      toNumberOr(source.west ?? source.westMeters, DEFAULT_AREA.west),
+    ),
+    remark:
+      String(source.remark ?? source.note ?? DEFAULT_AREA.remark).trim() ||
+      DEFAULT_AREA.remark,
+    assign: String(
+      source.assign ?? source.visibleRoles ?? DEFAULT_AREA.assign,
+    ).trim(),
+    email: String(source.email ?? source.visibleUsers ?? "").trim(),
+    active:
+      source.active === false || String(source.active).toLowerCase() === "false"
+        ? false
+        : true,
+    updatedAt: String(source.updatedAt || "").trim(),
+    updatedBy: String(source.updatedBy || "").trim(),
+  };
+}
+
+function writeAreaObjects(sheet, list) {
+  const rows = [AREA_HEADERS];
+  list.forEach((area) => {
+    const n = normalizeArea(area);
+    rows.push([
+      n.areaId || "",
+      n.areaName || "",
+      n.lat,
+      n.lng,
+      n.north,
+      n.south,
+      n.east,
+      n.west,
+      n.remark || "",
+      n.assign || "",
+      n.email || "",
+      n.active !== false,
+      n.updatedAt || "",
+      n.updatedBy || "",
+    ]);
+  });
+
+  sheet.clearContents();
+  sheet.getRange(1, 1, rows.length, AREA_HEADERS.length).setValues(rows);
+}
+
+function getOrCreateAreasSheet(ss) {
+  let sheet = ss.getSheetByName(AREAS_SHEET_NAME);
+  if (!sheet) sheet = ss.getSheetByName("Areas");
+  if (!sheet) sheet = ss.insertSheet(AREAS_SHEET_NAME);
+  ensureHeaderRow(sheet, AREA_HEADERS);
+  return sheet;
+}
+
+/* ---------------- Logs ---------------- */
+
+function saveLog(payload) {
+  const ss = openSpreadsheet();
+  const sheet = getOrCreateLogsSheet(ss);
+
+  const createdAtRaw =
+    payload.createdAt || payload.time || new Date().toISOString();
+  const createdAt = parseToDate(createdAtRaw);
+  if (!createdAt) throw new Error("time is invalid");
+
+  const createdAtDisplay = formatBangkokDateTime(createdAt);
+  const displayName =
+    String(payload.displayName || payload.name || "-").trim() || "-";
+  const email = String(payload.email || "").trim();
+  const phone = "";
+  const site = String(
+    payload.site || payload.siteName || DEFAULT_AREA.areaName,
+  ).trim();
+  const session = String(payload.session || "").trim();
+  const userId = String(payload.userId || "").trim();
+  const pictureUrl = String(payload.pictureUrl || "").trim();
+  const status = String(payload.status || "checked_in").trim();
+  const lat = Number(payload.lat);
+  const lng = Number(payload.lng);
+  const accuracy =
+    payload.accuracy !== undefined ? Number(payload.accuracy) : "";
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    throw new Error("lat/lng is required");
+  }
+
+  const headers = getHeaderRow(sheet);
+  const row = buildLogWriteRow(headers, {
+    createdAtDisplay,
+    displayName,
+    email,
+    phone,
+    site,
+    session,
+    lat,
+    lng,
+    accuracy,
+    userId,
+    pictureUrl,
+    status,
+  });
+
+  sheet.appendRow(row);
+  SpreadsheetApp.flush();
+
+  return { ok: true, message: "บันทึกข้อมูลสำเร็จ", time: createdAtDisplay };
+}
+
+function getLogsResponse(params) {
+  const ss = openSpreadsheet();
+  const sheet = getOrCreateLogsSheet(ss);
+  const list = readObjectsFromSheet(sheet, LOG_HEADERS);
+
+  const limit = Math.max(1, toInt(params.limit || 200, 200));
+  return { ok: true, data: list.slice(-limit).reverse() };
+}
+
+function getOrCreateLogsSheet(ss) {
+  let sheet = ss.getSheetByName(LOGS_SHEET_NAME);
+  if (!sheet) sheet = ss.insertSheet(LOGS_SHEET_NAME);
+  ensureHeaderRow(sheet, LOG_HEADERS);
+  return sheet;
+}
+
+function buildLogWriteRow(headers, obj) {
+  const map = {
+    createdAt: obj.createdAtDisplay,
+    displayName: obj.displayName,
+    email: obj.email,
+    phone: obj.phone,
+    site: obj.site,
+    session: obj.session,
+    lat: obj.lat,
+    lng: obj.lng,
+    accuracy: obj.accuracy,
+    userId: obj.userId,
+    pictureUrl: obj.pictureUrl,
+    status: obj.status,
+  };
+
+  return headers.map((h) => (map[h] !== undefined ? map[h] : ""));
+}
+
+/* ---------------- Users ---------------- */
+
 function getUsersResponse(params) {
   const ss = openSpreadsheet();
   const sheet = getOrCreateUsersSheet(ss);
-  const list = readObjectsFromSheet(sheet, USER_HEADERS).map(normalizeUser).filter(Boolean);
+  const list = readObjectsFromSheet(sheet, USER_HEADERS)
+    .map(normalizeUser)
+    .filter(Boolean);
 
-  const email = String(params && params.email || "").trim().toLowerCase();
-  const uid = String(params && params.uid || "").trim();
-  const role = String(params && params.role || "").trim().toLowerCase();
-  const active = String(params && params.active || "").trim().toLowerCase();
+  const email = String((params && params.email) || "")
+    .trim()
+    .toLowerCase();
+  const uid = String((params && params.uid) || "").trim();
+  const role = String((params && params.role) || "")
+    .trim()
+    .toLowerCase();
+  const active = String((params && params.active) || "")
+    .trim()
+    .toLowerCase();
 
   let filtered = list;
-  if (email) filtered = filtered.filter((u) => String(u.email || "").toLowerCase() === email);
+  if (email)
+    filtered = filtered.filter(
+      (u) => String(u.email || "").toLowerCase() === email,
+    );
   if (uid) filtered = filtered.filter((u) => String(u.uid || "") === uid);
-  if (role) filtered = filtered.filter((u) => String(u.role || "").toLowerCase() === role);
+  if (role)
+    filtered = filtered.filter(
+      (u) => String(u.role || "").toLowerCase() === role,
+    );
   if (active === "true") filtered = filtered.filter((u) => u.active !== false);
   if (active === "false") filtered = filtered.filter((u) => u.active === false);
 
@@ -200,7 +383,9 @@ function getUsersResponse(params) {
     const ra = order[String(a.role || "user").toLowerCase()] ?? 9;
     const rb = order[String(b.role || "user").toLowerCase()] ?? 9;
     if (ra !== rb) return ra - rb;
-    return String(a.displayName || a.email || "").localeCompare(String(b.displayName || b.email || ""));
+    return String(a.displayName || a.email || "").localeCompare(
+      String(b.displayName || b.email || ""),
+    );
   });
 
   return { ok: true, data: filtered };
@@ -209,7 +394,9 @@ function getUsersResponse(params) {
 function saveUser(payload) {
   const ss = openSpreadsheet();
   const sheet = getOrCreateUsersSheet(ss);
-  const all = readObjectsFromSheet(sheet, USER_HEADERS).map(normalizeUser).filter(Boolean);
+  const all = readObjectsFromSheet(sheet, USER_HEADERS)
+    .map(normalizeUser)
+    .filter(Boolean);
   const incoming = normalizeUser(payload);
 
   if (!incoming.email && !incoming.uid) {
@@ -218,11 +405,17 @@ function saveUser(payload) {
 
   const now = formatBangkokDateTime(new Date());
   incoming.updatedAt = now;
-  incoming.updatedBy = String(payload.updatedBy || payload.userId || payload.email || "").trim();
+  incoming.updatedBy = String(
+    payload.updatedBy || payload.userId || payload.email || "",
+  ).trim();
 
   const matchIndex = all.findIndex((u) => {
     if (incoming.uid && String(u.uid || "") === incoming.uid) return true;
-    if (incoming.email && String(u.email || "").toLowerCase() === incoming.email.toLowerCase()) return true;
+    if (
+      incoming.email &&
+      String(u.email || "").toLowerCase() === incoming.email.toLowerCase()
+    )
+      return true;
     return false;
   });
 
@@ -243,99 +436,8 @@ function saveUser(payload) {
   return { ok: true, message: "บันทึกสิทธิ์สำเร็จ", data: all };
 }
 
-/* ---------------- Spreadsheet helpers ---------------- */
-function openSpreadsheet() {
-  return SpreadsheetApp.openById(SPREADSHEET_ID);
-}
-
-function getOrCreateLogsSheet(ss) {
-  let sheet = ss.getSheetByName(LOGS_SHEET_NAME);
-  if (!sheet) sheet = ss.insertSheet(LOGS_SHEET_NAME);
-  ensureHeaderRow(sheet, LOG_HEADERS);
-  return sheet;
-}
-
-function getOrCreateAreasSheet(ss) {
-  let sheet = ss.getSheetByName(AREAS_SHEET_NAME);
-  if (!sheet) sheet = ss.getSheetByName("Areas");
-  if (!sheet) sheet = ss.insertSheet(AREAS_SHEET_NAME);
-  ensureHeaderRow(sheet, AREA_HEADERS);
-  return sheet;
-}
-
-function getOrCreateUsersSheet(ss) {
-  let sheet = ss.getSheetByName(USERS_SHEET_NAME);
-  if (!sheet) sheet = ss.insertSheet(USERS_SHEET_NAME);
-  ensureHeaderRow(sheet, USER_HEADERS);
-  return sheet;
-}
-
-function ensureHeaderRow(sheet, headers) {
-  const firstRow = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
-  const hasAny = firstRow.some((v) => String(v || "").trim() !== "");
-  if (!hasAny) sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-}
-
-function getHeaderRow(sheet) {
-  const lastCol = Math.max(sheet.getLastColumn(), 1);
-  return sheet.getRange(1, 1, 1, lastCol).getValues()[0].map((v) => String(v || "").trim());
-}
-
-function buildLogWriteRow(headers, obj) {
-  const map = {
-    createdAt: obj.createdAtDisplay,
-    displayName: obj.displayName,
-    email: obj.email,
-    phone: obj.phone,
-    site: obj.site,
-    session: obj.session,
-    lat: obj.lat,
-    lng: obj.lng,
-    accuracy: obj.accuracy,
-    userId: obj.userId,
-    pictureUrl: obj.pictureUrl,
-    status: obj.status,
-  };
-  return headers.map((h) => map[h] !== undefined ? map[h] : "");
-}
-
-function readSheetAsObjects(sheet, headers) {
-  const values = sheet.getDataRange().getValues();
-  if (!values || values.length < 2) return [];
-  return values.slice(1).map((row) => rowToObject(headers, row)).filter((obj) => obj.areaId || obj.areaName);
-}
-
-function writeAreaObjects(sheet, list) {
-  const rows = [AREA_HEADERS];
-  list.forEach((area) => {
-    const n = normalizeArea(area);
-    rows.push([
-      n.areaId || "",
-      n.areaName || "",
-      n.lat,
-      n.lng,
-      n.north,
-      n.south,
-      n.east,
-      n.west,
-      n.note || "",
-      n.active !== false,
-      n.visibleRoles || "",
-      n.visibleUsers || "",
-      n.updatedAt || "",
-      n.updatedBy || "",
-    ]);
-  });
-  sheet.clearContents();
-  sheet.getRange(1, 1, rows.length, AREA_HEADERS.length).setValues(rows);
-}
-
-function readObjectsFromSheet(sheet, headers) {
-  const values = sheet.getDataRange().getValues();
-  if (!values || values.length < 2) return [];
-  return values.slice(1).map((row) => rowToObject(headers, row)).filter((obj) => {
-    return Object.values(obj).some((v) => String(v ?? "").trim() !== "");
-  });
+function deleteUser(user) {
+  return saveUser({ ...(user || {}), actionType: "delete" });
 }
 
 function writeUserObjects(sheet, list) {
@@ -354,25 +456,80 @@ function writeUserObjects(sheet, list) {
       n.updatedBy || "",
     ]);
   });
+
   sheet.clearContents();
   sheet.getRange(1, 1, rows.length, USER_HEADERS.length).setValues(rows);
 }
 
+function getOrCreateUsersSheet(ss) {
+  let sheet = ss.getSheetByName(USERS_SHEET_NAME);
+  if (!sheet) sheet = ss.insertSheet(USERS_SHEET_NAME);
+  ensureHeaderRow(sheet, USER_HEADERS);
+  return sheet;
+}
+
 function normalizeUser(raw) {
   const source = raw || {};
-  const role = String(source.role || "user").trim().toLowerCase();
-  const safeRole = ["masteradmin", "admin", "user"].includes(role) ? role : "user";
+  const role = String(source.role || "user")
+    .trim()
+    .toLowerCase();
+  const safeRole = ["masteradmin", "admin", "user"].includes(role)
+    ? role
+    : "user";
+
   return {
-    email: String(source.email || source.username || "").trim().toLowerCase(),
+    email: String(source.email || source.username || "")
+      .trim()
+      .toLowerCase(),
     uid: String(source.uid || source.userId || "").trim(),
-    displayName: String(source.displayName || source.name || source.fullName || "").trim(),
+    displayName: String(
+      source.displayName || source.name || source.fullName || "",
+    ).trim(),
     role: safeRole,
-    active: source.active === false || String(source.active).toLowerCase() === "false" ? false : true,
-    visibleAreas: String(source.visibleAreas || source.allowedAreas || "").trim(),
+    active:
+      source.active === false || String(source.active).toLowerCase() === "false"
+        ? false
+        : true,
+    visibleAreas: String(
+      source.visibleAreas || source.allowedAreas || "",
+    ).trim(),
     note: String(source.note || source.remark || "").trim(),
     updatedAt: String(source.updatedAt || "").trim(),
     updatedBy: String(source.updatedBy || "").trim(),
   };
+}
+
+/* ---------------- Helpers ---------------- */
+
+function openSpreadsheet() {
+  return SpreadsheetApp.openById(SPREADSHEET_ID);
+}
+
+function ensureHeaderRow(sheet, headers) {
+  const firstRow = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
+  const hasAny = firstRow.some((v) => String(v || "").trim() !== "");
+  if (!hasAny) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  }
+}
+
+function getHeaderRow(sheet) {
+  const lastCol = Math.max(sheet.getLastColumn(), 1);
+  return sheet
+    .getRange(1, 1, 1, lastCol)
+    .getValues()[0]
+    .map((v) => String(v || "").trim());
+}
+
+function readObjectsFromSheet(sheet, headers) {
+  const values = sheet.getDataRange().getValues();
+  if (!values || values.length < 2) return [];
+  return values
+    .slice(1)
+    .map((row) => rowToObject(headers, row))
+    .filter((obj) =>
+      Object.values(obj).some((v) => String(v ?? "").trim() !== ""),
+    );
 }
 
 function rowToObject(headers, row) {
@@ -383,27 +540,23 @@ function rowToObject(headers, row) {
   return obj;
 }
 
-function normalizeArea(raw) {
-  const source = raw || {};
-  return {
-    areaId: String(source.areaId || source.id || "default").trim() || "default",
-    areaName: String(source.areaName || source.siteName || source.site || DEFAULT_AREA.areaName).trim() || DEFAULT_AREA.areaName,
-    lat: Number(source.lat ?? source.centerLat ?? DEFAULT_AREA.lat),
-    lng: Number(source.lng ?? source.centerLng ?? DEFAULT_AREA.lng),
-    north: Math.max(0, Number(source.north ?? source.northMeters ?? DEFAULT_AREA.north)),
-    south: Math.max(0, Number(source.south ?? source.southMeters ?? DEFAULT_AREA.south)),
-    east: Math.max(0, Number(source.east ?? source.eastMeters ?? DEFAULT_AREA.east)),
-    west: Math.max(0, Number(source.west ?? source.westMeters ?? DEFAULT_AREA.west)),
-    note: String(source.note ?? source.remark ?? DEFAULT_AREA.note).trim(),
-    active: source.active === false || String(source.active).toLowerCase() === "false" ? false : true,
-    visibleRoles: String(source.visibleRoles ?? DEFAULT_AREA.visibleRoles).trim(),
-    visibleUsers: String(source.visibleUsers ?? source.allowedUsers ?? "").trim(),
-    updatedAt: String(source.updatedAt || "").trim(),
-    updatedBy: String(source.updatedBy || "").trim(),
-  };
+function splitList(value) {
+  return String(value || "")
+    .split(/[,\n]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
-/* ---------------- Generic helpers ---------------- */
+function toNumberOr(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function toInt(value, fallback) {
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function parseToDate(raw) {
   if (raw instanceof Date) return raw;
   if (raw === null || raw === undefined || raw === "") return null;
@@ -419,5 +572,7 @@ function formatBangkokDateTime(date) {
 }
 
 function jsonOutput(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(
+    ContentService.MimeType.JSON,
+  );
 }

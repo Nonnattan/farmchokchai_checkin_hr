@@ -4,128 +4,425 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SetArea</title>
+
     <link rel="stylesheet" href="./assets/styles.css" />
+    <link rel="icon" href="data:," />
     <link
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
-    <script src="./assets/firebase-config.js"></script>
-    <script src="./assets/firebase-auth.js"></script>
+
+    <script src="./assets/common.js"></script>
+    <script src="./assets/components/nav-tabs.js"></script>
+    <script defer src="./assets/page-scripts/setarea.js"></script>
+
     <style>
+      :root {
+        --line: #e5e7eb;
+        --text: #0f172a;
+        --muted: #64748b;
+        --bg: #f8fafc;
+        --primary: #2563eb;
+        --success: #047857;
+        --danger: #b91c1c;
+        --warning: #b45309;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        background: linear-gradient(180deg, #f8fafc, #eef2ff);
+        color: var(--text);
+      }
+
+      .container {
+        max-width: 1600px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+
+      .topbar,
+      .card {
+        background: rgba(255, 255, 255, 0.92);
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+      }
+
+      .topbar {
+        padding: 18px 20px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 18px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .brand-badge {
+        width: 50px;
+        height: 50px;
+        border-radius: 16px;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(135deg, #2563eb, #7c3aed);
+        color: #fff;
+        font-weight: 800;
+      }
+
+      .brand h1 {
+        margin: 0;
+        font-size: 24px;
+        line-height: 1.15;
+      }
+
+      .brand p {
+        margin: 4px 0 0;
+        color: var(--muted);
+      }
+
       .layout {
         display: grid;
-        grid-template-columns: 0.98fr 1.02fr;
-        gap: 20px;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
       }
-      .page-subtitle {
-        margin: 4px 0 0;
-        color: #667085;
+
+      .stack {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        padding: 18px;
       }
+
       .status-bar {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 12px;
         padding: 14px 16px;
-        border-radius: 14px;
-        background: #f8fafc;
+        border-radius: 16px;
         border: 1px solid var(--line);
+        background: var(--bg);
       }
+
       .status-bar.success {
         background: #ecfdf3;
         border-color: #a7f3d0;
       }
+
       .status-bar.loading {
         background: #eff6ff;
         border-color: #bfdbfe;
       }
+
       .status-bar.error {
         background: #fef2f2;
         border-color: #fecaca;
       }
+
       .status-title {
         margin: 0;
-        font-weight: 700;
-        color: #0f172a;
+        font-size: 15px;
+        font-weight: 800;
       }
+
       .status-sub {
         margin: 4px 0 0;
         font-size: 13px;
         color: #475569;
         line-height: 1.5;
       }
+
       .spinner {
-        width: 14px;
-        height: 14px;
-        border: 2px solid rgba(255, 255, 255, 0.35);
+        width: 16px;
+        height: 16px;
+        border: 2px solid rgba(255, 255, 255, 0.4);
         border-top-color: #fff;
         border-radius: 50%;
-        display: inline-block;
         animation: spin 0.8s linear infinite;
-        vertical-align: -2px;
-        margin-right: 8px;
+        flex: none;
       }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .btn {
+        appearance: none;
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--text);
+        border-radius: 14px;
+        padding: 11px 14px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: 0.2s ease;
+      }
+
+      .btn:hover {
+        transform: translateY(-1px);
+      }
+
+      .btn.primary {
+        background: var(--primary);
+        color: #fff;
+        border-color: var(--primary);
+      }
+
+      .btn.ghost {
+        background: #fff;
+      }
+
+      .btn.danger {
+        background: #fef2f2;
+        color: var(--danger);
+        border-color: #fecaca;
+      }
+
+      .btn:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      .info-box {
+        padding: 16px;
+        background: #fafbff;
+        border: 1px dashed #c7d2fe;
+        border-radius: 18px;
+      }
+
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 7px 11px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .pill.success {
+        background: #ecfdf3;
+        color: var(--success);
+      }
+
+      .pill.warning {
+        background: #fffbeb;
+        color: var(--warning);
+      }
+
+      .pill.danger {
+        background: #fef2f2;
+        color: var(--danger);
+      }
+
+      .mini-note {
+        font-size: 13px;
+        color: var(--muted);
+        line-height: 1.6;
+        margin: 10px 0 0;
+      }
+
       .table-wrap {
         overflow: auto;
         border: 1px solid var(--line);
         border-radius: 18px;
         background: #fff;
       }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 900px;
+      }
+
+      thead th {
+        background: #f8fafc;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        text-align: left;
+        font-size: 13px;
+        color: #334155;
+        padding: 14px 12px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      tbody td {
+        padding: 14px 12px;
+        border-bottom: 1px solid #eef2f7;
+        vertical-align: top;
+        font-size: 14px;
+      }
+
       .click-row {
         cursor: pointer;
       }
+
       .click-row:hover {
         background: #f8fafc;
       }
+
       .click-row.active {
         background: #eff6ff;
       }
-      .pill-sm {
-        display: inline-flex;
-        padding: 6px 10px;
-        border-radius: 999px;
-        background: #eff6ff;
-        color: #1d4ed8;
+
+      .small {
         font-size: 12px;
-        font-weight: 800;
+        color: var(--muted);
       }
-      .map-wrap {
-        height: 520px;
+
+      .map-shell {
+        position: relative;
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        overflow: hidden;
+        background: #fff;
       }
-      .mini-note {
+
+      .map-hint {
+        position: absolute;
+        z-index: 500;
+        left: 14px;
+        top: 14px;
+        right: 14px;
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: center;
+        pointer-events: none;
+      }
+
+      .map-label {
+        background: rgba(255, 255, 255, 0.94);
+        border: 1px solid #dbeafe;
+        border-radius: 14px;
+        padding: 10px 12px;
+        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+        backdrop-filter: blur(8px);
         font-size: 13px;
-        color: #64748b;
-        line-height: 1.6;
+        line-height: 1.5;
       }
+
+      .map-wrap {
+        height: 530px;
+      }
+
+      .map {
+        width: 100%;
+        height: 100%;
+      }
+
+      .form-card {
+        padding: 16px;
+        background: #fafbff;
+        border: 1px dashed #c7d2fe;
+        border-radius: 18px;
+      }
+
       .field-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
       }
-      .mini-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 12px;
+
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
       }
+
+      .field label {
+        font-size: 13px;
+        color: #334155;
+        font-weight: 700;
+      }
+
+      .field input,
+      .field textarea,
+      .field select {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 11px 12px;
+        font: inherit;
+        outline: none;
+        background: #fff;
+      }
+
+      .field textarea {
+        min-height: 90px;
+        resize: vertical;
+      }
+
+      .section-title {
+        margin: 0;
+        font-size: 20px;
+      }
+
+      .page-subtitle {
+        margin: 4px 0 0;
+        color: var(--muted);
+      }
+
+      .top-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
       @keyframes spin {
         to {
           transform: rotate(360deg);
         }
       }
-      @media (max-width: 1100px) {
+
+      @media (max-width: 1200px) {
         .layout {
           grid-template-columns: 1fr;
         }
+
         .map-wrap {
-          height: 360px;
+          height: 380px;
         }
-        .field-grid,
-        .mini-grid {
+      }
+
+      @media (max-width: 760px) {
+        .container {
+          padding: 12px;
+        }
+
+        .topbar {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+
+        .field-grid {
           grid-template-columns: 1fr;
         }
       }
@@ -133,243 +430,228 @@
   </head>
   <body>
     <div id="app">
-      <template>
-        <div class="container">
-          <div class="topbar">
-            <div class="brand">
-              <div class="brand-badge">SA</div>
-              <div>
-                <h1>SetArea</h1>
-                <p>ตั้งค่าพื้นที่เช็กอินแบบมีแผนที่และตารางสิทธิ์</p>
-              </div>
-            </div>
-            <app-tabs :items="navItems" />
-          </div>
-
-          <div class="layout">
-            <section class="card stack">
-              <div class="status-bar" :class="statusType">
-                <div>
-                  <p class="status-title">{{ statusTitle }}</p>
-                  <p class="status-sub">{{ statusDesc }}</p>
-                </div>
-                <div v-if="loading || saving" class="spinner"></div>
-              </div>
-
-              <div class="actions">
-                <button class="btn primary" @click="newArea">
-                  + เพิ่มพื้นที่
-                </button>
-                <button class="btn ghost" @click="restoreSelected">
-                  รีโหลดพื้นที่ที่เลือก
-                </button>
-                <button class="btn ghost" @click="save" :disabled="saving">
-                  {{ saving ? 'กำลังบันทึก...' : 'บันทึก' }}
-                </button>
-                <button
-                  class="btn danger"
-                  @click="removeArea"
-                  :disabled="saving"
-                >
-                  ลบพื้นที่
-                </button>
-              </div>
-
-              <div
-                class="card"
-                style="padding: 16px; background: #fafbff; border-style: dashed"
-              >
-                <div class="row">
-                  <span class="pill success">Areas: {{ totalAreas }}</span>
-                  <span class="pill warning">Role: masteradmin</span>
-                </div>
-                <p class="mini-note" style="margin: 10px 0 0">
-                  คลิกชื่อพื้นที่ในตารางเพื่อย้าย marker ไปที่จุดนั้น หรือลาก
-                  marker บนแผนที่เพื่อปรับศูนย์กลางใหม่
-                </p>
-              </div>
-
-              <div>
-                <h2 style="margin: 0 0 8px">ตารางพื้นที่</h2>
-                <div class="table-wrap">
-                  <table class="table">
-                    <thead>
-                      <tr>
-                        <th>พื้นที่</th>
-                        <th>พิกัด</th>
-                        <th>สิทธิ์เห็น</th>
-                        <th>สถานะ</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr
-                        v-for="area in areas"
-                        :key="area.areaId"
-                        class="click-row"
-                        :class="{ active: area.areaId === selectedId }"
-                        @click="pickArea(area)"
-                      >
-                        <td>
-                          <b>{{ area.areaName }}</b><br />
-                          <span class="muted small">{{ area.areaId }}</span
-                          ><br />
-                          <span class="muted small"
-                            >{{ area.note || '-' }}</span
-                          >
-                        </td>
-                        <td class="small">
-                          Lat {{ common.formatNumber(area.centerLat) }}<br />
-                          Lng {{ common.formatNumber(area.centerLng) }}<br />
-                          N/S/E/W {{ area.northMeters }}/{{ area.southMeters
-                          }}/{{ area.eastMeters }}/{{ area.westMeters }}
-                        </td>
-                        <td class="small">
-                          Roles: {{ area.visibleRoles || '-' }}<br />
-                          Users: {{ area.visibleUsers || '-' }}
-                        </td>
-                        <td>
-                          <span
-                            class="pill-sm"
-                            :style="{background: area.active === false ? '#fef2f2' : '#ecfdf3', color: area.active === false ? '#b91c1c' : '#047857'}"
-                          >
-                            {{ area.active === false ? 'inactive' : 'active' }}
-                          </span>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </section>
-
-            <section class="card stack">
-              <div>
-                <h2>Map Preview</h2>
-                <p class="page-subtitle">
-                  คลิกในแผนที่เพื่อย้าย marker
-                  หรือเลือกจากตารางเพื่อโฟกัสพื้นที่
-                </p>
-              </div>
-
-              <div class="map-shell">
-                <div class="map-hint">
-                  <div class="map-label">
-                    <b>{{ editing.areaName }}</b><br />
-                    {{ editing.areaId }}
-                  </div>
-                  <div class="row">
-                    <span class="pill success">Draggable marker</span>
-                    <span class="pill warning">Boundary frame</span>
-                  </div>
-                </div>
-                <div class="map-wrap">
-                  <div ref="mapEl" class="map"></div>
-                </div>
-              </div>
-
-              <div
-                class="card"
-                style="padding: 16px; background: #fafbff; border-style: dashed"
-              >
-                <h3 style="margin: 0 0 10px">แก้ไขพื้นที่ที่เลือก</h3>
-                <div class="mini-grid">
-                  <div class="field">
-                    <label>areaId</label>
-                    <input v-model="editing.areaId" />
-                  </div>
-                  <div class="field">
-                    <label>areaName</label>
-                    <input v-model="editing.areaName" />
-                  </div>
-                  <div class="field">
-                    <label>centerLat</label>
-                    <input
-                      v-model.number="editing.centerLat"
-                      type="number"
-                      step="0.000001"
-                    />
-                  </div>
-                  <div class="field">
-                    <label>centerLng</label>
-                    <input
-                      v-model.number="editing.centerLng"
-                      type="number"
-                      step="0.000001"
-                    />
-                  </div>
-                  <div class="field">
-                    <label>northMeters</label>
-                    <input
-                      v-model.number="editing.northMeters"
-                      type="number"
-                      min="0"
-                    />
-                  </div>
-                  <div class="field">
-                    <label>southMeters</label>
-                    <input
-                      v-model.number="editing.southMeters"
-                      type="number"
-                      min="0"
-                    />
-                  </div>
-                  <div class="field">
-                    <label>eastMeters</label>
-                    <input
-                      v-model.number="editing.eastMeters"
-                      type="number"
-                      min="0"
-                    />
-                  </div>
-                  <div class="field">
-                    <label>westMeters</label>
-                    <input
-                      v-model.number="editing.westMeters"
-                      type="number"
-                      min="0"
-                    />
-                  </div>
-                </div>
-
-                <div class="field">
-                  <label>note</label>
-                  <textarea
-                    v-model="editing.note"
-                    placeholder="รายละเอียดพื้นที่"
-                  ></textarea>
-                </div>
-
-                <div class="mini-grid">
-                  <div class="field">
-                    <label>visibleRoles</label>
-                    <input
-                      v-model="editing.visibleRoles"
-                      placeholder="masteradmin,admin,user"
-                    />
-                  </div>
-                  <div class="field">
-                    <label>visibleUsers</label>
-                    <input
-                      v-model="editing.visibleUsers"
-                      placeholder="uid1,uid2 หรือ email"
-                    />
-                  </div>
-                </div>
-
-                <div class="field">
-                  <label>active</label>
-                  <select v-model="editing.active">
-                    <option :value="true">true</option>
-                    <option :value="false">false</option>
-                  </select>
-                </div>
-              </div>
-            </section>
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-badge">SA</div>
+          <div>
+            <h1>SetArea</h1>
+            <p>
+              ตั้งค่าพื้นที่เช็กอินด้วยแผนที่ และกำหนดสิทธิ์การมองเห็นใน Google
+              Sheet
+            </p>
           </div>
         </div>
-      </template>
+
+        <app-tabs :items="navItems"></app-tabs>
+      </header>
+
+      <div class="layout">
+        <section class="card stack">
+          <div class="status-bar" :class="statusClass">
+            <div>
+              <p class="status-title">{{ statusTitle }}</p>
+              <p class="status-sub">{{ statusDesc }}</p>
+            </div>
+            <div v-if="loading || saving" class="spinner"></div>
+          </div>
+
+          <div class="actions">
+            <button class="btn primary" @click="newArea">+ เพิ่มพื้นที่</button>
+            <button
+              class="btn ghost"
+              @click="restoreSelected"
+              :disabled="loading"
+            >
+              รีโหลดพื้นที่ที่เลือก
+            </button>
+            <button class="btn ghost" @click="save" :disabled="saving">
+              {{ saving ? 'กำลังบันทึก...' : 'บันทึก' }}
+            </button>
+            <button class="btn danger" @click="removeArea" :disabled="saving">
+              ลบพื้นที่
+            </button>
+          </div>
+
+          <div class="info-box">
+            <div class="row">
+              <span class="pill success">Areas: {{ totalAreas }}</span>
+              <span class="pill warning">Role: masteradmin</span>
+              <span class="pill danger">Sheet: location</span>
+            </div>
+            <p class="mini-note">
+              คลิกชื่อพื้นที่ในตารางเพื่อย้าย marker ไปตำแหน่งนั้น หรือลาก
+              marker / คลิกบนแผนที่เพื่อปรับศูนย์กลางใหม่
+            </p>
+          </div>
+
+          <div>
+            <h2 class="section-title">ตารางพื้นที่</h2>
+            <p class="page-subtitle">
+              ใช้แถวนี้เพื่อเลือกพื้นที่ที่ต้องการแก้ไข
+            </p>
+
+            <div class="table-wrap" style="margin-top: 12px">
+              <table>
+                <thead>
+                  <tr>
+                    <th>พื้นที่</th>
+                    <th>พิกัด</th>
+                    <th>ขอบเขต</th>
+                    <th>Assign</th>
+                    <th>Email</th>
+                    <th>สถานะ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="area in areas"
+                    :key="area.areaId"
+                    class="click-row"
+                    :class="{ active: area.areaId === selectedId }"
+                    @click="pickArea(area)"
+                  >
+                    <td>
+                      <b>{{ area.areaName }}</b><br />
+                      <span class="small">{{ area.areaId }}</span><br />
+                      <span class="small">{{ area.remark || '-' }}</span>
+                    </td>
+                    <td class="small">
+                      Lat {{ formatNumber(area.lat) }}<br />
+                      Lng {{ formatNumber(area.lng) }}
+                    </td>
+                    <td class="small">
+                      N/S/E/W<br />
+                      {{ area.north }}/{{ area.south }}/{{ area.east }}/{{
+                      area.west }}
+                    </td>
+                    <td class="small">{{ area.assign || '-' }}</td>
+                    <td class="small">{{ area.email || '-' }}</td>
+                    <td>
+                      <span
+                        class="pill"
+                        :style="{
+                          background: area.active === false ? '#fef2f2' : '#ecfdf3',
+                          color: area.active === false ? '#b91c1c' : '#047857'
+                        }"
+                      >
+                        {{ area.active === false ? 'inactive' : 'active' }}
+                      </span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="card stack">
+          <div>
+            <h2 class="section-title">Map Preview</h2>
+            <p class="page-subtitle">
+              พื้นที่ที่เลือกจะมี marker และกรอบสี่เหลี่ยมแสดงทันที
+            </p>
+          </div>
+
+          <div class="map-shell">
+            <div class="map-hint">
+              <div class="map-label">
+                <b>{{ editing.areaName }}</b><br />
+                {{ editing.areaId }}
+              </div>
+              <div class="row">
+                <span class="pill success">Draggable marker</span>
+                <span class="pill warning">Boundary frame</span>
+              </div>
+            </div>
+            <div class="map-wrap">
+              <div ref="mapEl" class="map"></div>
+            </div>
+          </div>
+
+          <div class="form-card">
+            <h3 style="margin: 0 0 10px">แก้ไขพื้นที่ที่เลือก</h3>
+
+            <div class="field-grid">
+              <div class="field">
+                <label>areaId</label>
+                <input v-model="editing.areaId" placeholder="qr_code" />
+              </div>
+              <div class="field">
+                <label>areaName</label>
+                <input v-model="editing.areaName" placeholder="qr_code" />
+              </div>
+
+              <div class="field">
+                <label>lat</label>
+                <input
+                  v-model.number="editing.lat"
+                  type="number"
+                  step="0.000001"
+                />
+              </div>
+              <div class="field">
+                <label>lng</label>
+                <input
+                  v-model.number="editing.lng"
+                  type="number"
+                  step="0.000001"
+                />
+              </div>
+
+              <div class="field">
+                <label>north</label>
+                <input v-model.number="editing.north" type="number" min="0" />
+              </div>
+              <div class="field">
+                <label>south</label>
+                <input v-model.number="editing.south" type="number" min="0" />
+              </div>
+
+              <div class="field">
+                <label>east</label>
+                <input v-model.number="editing.east" type="number" min="0" />
+              </div>
+              <div class="field">
+                <label>west</label>
+                <input v-model.number="editing.west" type="number" min="0" />
+              </div>
+            </div>
+
+            <div class="field" style="margin-top: 12px">
+              <label>remark</label>
+              <textarea
+                v-model="editing.remark"
+                placeholder="รายละเอียดพื้นที่"
+              ></textarea>
+            </div>
+
+            <div class="field-grid" style="margin-top: 12px">
+              <div class="field">
+                <label>assign (role)</label>
+                <input
+                  v-model="editing.assign"
+                  placeholder="masteradmin,admin"
+                />
+              </div>
+              <div class="field">
+                <label>email</label>
+                <input
+                  v-model="editing.email"
+                  placeholder="admin1@gmail.com,admin2@gmail.com"
+                />
+              </div>
+            </div>
+
+            <div class="field" style="margin-top: 12px">
+              <label>active</label>
+              <select v-model="editing.active">
+                <option :value="true">true</option>
+                <option :value="false">false</option>
+              </select>
+            </div>
+          </div>
+        </section>
+      </div>
     </div>
-    <script src="./assets/common.js"></script>
-    <script src="./assets/components/nav-tabs.js"></script>
   </body>
 </html>
