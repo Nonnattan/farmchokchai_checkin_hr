@@ -13,48 +13,215 @@
     <script src="./assets/common.js"></script>
     <script src="./assets/components/nav-tabs.js"></script>
     <script src="./assets/firebase-auth.js"></script>
+
     <style>
-      .layout{display:grid;grid-template-columns:.95fr 1.05fr;gap:20px}
-      .status-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-radius:14px;background:#f8fafc;border:1px solid var(--line)}
-      .status-bar.success{background:#ecfdf3;border-color:#a7f3d0}
-      .status-bar.loading{background:#eff6ff;border-color:#bfdbfe}
-      .status-bar.error{background:#fef2f2;border-color:#fecaca}
-      .status-title{margin:0;font-weight:700;color:#0f172a}
-      .status-sub{margin:4px 0 0;font-size:13px;color:#475569;line-height:1.5}
-      .table-wrap{overflow:auto;border:1px solid var(--line);border-radius:18px;background:#fff}
-      .table{width:100%;border-collapse:collapse}
-      .table th,.table td{padding:12px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
-      .table th{font-size:13px;color:#475467;background:#fafbff;position:sticky;top:0;z-index:1}
-      .table td{font-size:14px}
-      .click-row{cursor:pointer}
-      .click-row:hover{background:#f8fafc}
-      .click-row.active{background:#eff6ff}
-      .pill-sm{display:inline-flex;padding:6px 10px;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:12px;font-weight:800}
-      .pill-sm.good{background:#ecfdf3;color:#047857}
-      .pill-sm.bad{background:#fef2f2;color:#b91c1c}
-      .pill-sm.warning{background:#fffbeb;color:#92400e}
-      .form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-      .span-2{grid-column:1 / -1}
-      .small{font-size:13px;color:var(--muted)}
-      .hint{font-size:13px;color:#64748b;line-height:1.6}
-      .helper-box{padding:14px 16px;border-radius:16px;background:#f8fafc;border:1px solid var(--line);font-size:13px;color:#475569;line-height:1.6}
-      .select{width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:#fff;outline:none}
-      .select:focus{border-color:var(--primary);box-shadow:0 0 0 4px rgba(37,99,235,.10)}
-      .actions{display:flex;gap:10px;flex-wrap:wrap}
-      .searchbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-      .searchbar input{max-width:320px}
+      .layout {
+        display: grid;
+        grid-template-columns: 0.95fr 1.05fr;
+        gap: 20px;
+      }
+      .status-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 16px;
+        border-radius: 14px;
+        background: #f8fafc;
+        border: 1px solid var(--line);
+      }
+      .status-bar.success {
+        background: #ecfdf3;
+        border-color: #a7f3d0;
+      }
+      .status-bar.loading {
+        background: #eff6ff;
+        border-color: #bfdbfe;
+      }
+      .status-bar.error {
+        background: #fef2f2;
+        border-color: #fecaca;
+      }
+      .status-title {
+        margin: 0;
+        font-weight: 700;
+        color: #0f172a;
+      }
+      .status-sub {
+        margin: 4px 0 0;
+        font-size: 13px;
+        color: #475569;
+        line-height: 1.5;
+      }
+      .table-wrap {
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: #fff;
+      }
+      .table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .table th,
+      .table td {
+        padding: 12px 10px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+      .table th {
+        font-size: 13px;
+        color: #475467;
+        background: #fafbff;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+      }
+      .table td {
+        font-size: 14px;
+      }
+      .click-row {
+        cursor: pointer;
+      }
+      .click-row:hover {
+        background: #f8fafc;
+      }
+      .click-row.active {
+        background: #eff6ff;
+      }
+      .pill-sm {
+        display: inline-flex;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: #eff6ff;
+        color: #1d4ed8;
+        font-size: 12px;
+        font-weight: 800;
+      }
+      .pill-sm.good {
+        background: #ecfdf3;
+        color: #047857;
+      }
+      .pill-sm.bad {
+        background: #fef2f2;
+        color: #b91c1c;
+      }
+      .pill-sm.warning {
+        background: #fffbeb;
+        color: #92400e;
+      }
+      .form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .span-2 {
+        grid-column: 1 / -1;
+      }
+      .small {
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .hint {
+        font-size: 13px;
+        color: #64748b;
+        line-height: 1.6;
+      }
+      .helper-box {
+        padding: 14px 16px;
+        border-radius: 16px;
+        background: #f8fafc;
+        border: 1px solid var(--line);
+        font-size: 13px;
+        color: #475569;
+        line-height: 1.6;
+      }
+      .select {
+        width: 100%;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #fff;
+        outline: none;
+      }
+      .select:focus {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+      }
+      .actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .searchbar {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .searchbar input {
+        max-width: 320px;
+      }
 
-      /* Mode Tabs */
-      .mode-tabs{display:flex;gap:8px;border-bottom:2px solid var(--line);padding-bottom:14px}
-      .mode-tab{padding:10px 20px;border-radius:12px;border:1px solid var(--line);background:#fff;cursor:pointer;font-size:14px;font-weight:600;color:#475569;transition:all .15s}
-      .mode-tab.active{background:var(--primary,#2563eb);color:#fff;border-color:var(--primary,#2563eb)}
-      .mode-tab:hover:not(.active){background:#f1f5f9}
+      .mode-tabs {
+        display: flex;
+        gap: 8px;
+        border-bottom: 2px solid var(--line);
+        padding-bottom: 14px;
+      }
+      .mode-tab {
+        padding: 10px 20px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: #fff;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 600;
+        color: #475569;
+        transition: all 0.15s;
+      }
+      .mode-tab.active {
+        background: var(--primary, #2563eb);
+        color: #fff;
+        border-color: var(--primary, #2563eb);
+      }
+      .mode-tab:hover:not(.active) {
+        background: #f1f5f9;
+      }
 
-      /* Password info box */
-      .pw-safe{padding:14px 16px;border-radius:16px;background:#ecfdf3;border:1px solid #a7f3d0;font-size:13px;color:#065f46;line-height:1.6}
-      .req{color:#dc2626;margin-left:2px}
+      .pw-safe {
+        padding: 14px 16px;
+        border-radius: 16px;
+        background: #ecfdf3;
+        border: 1px solid #a7f3d0;
+        font-size: 13px;
+        color: #065f46;
+        line-height: 1.6;
+      }
+      .req {
+        color: #dc2626;
+        margin-left: 2px;
+      }
 
-      @media (max-width: 1100px){.layout{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}}
+      .selected-card {
+        padding: 14px 16px;
+        border-radius: 16px;
+        background: #fff7ed;
+        border: 1px solid #fed7aa;
+        font-size: 13px;
+        color: #9a3412;
+        line-height: 1.6;
+      }
+
+      @media (max-width: 1100px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+        .form-grid {
+          grid-template-columns: 1fr;
+        }
+      }
     </style>
   </head>
   <body>
@@ -67,7 +234,7 @@
             <div class="brand-badge">US</div>
             <div>
               <h1>Set Role / Users</h1>
-              <p>Firestore collection <b>users</b> • masteradmin เท่านั้นที่แก้ role ได้</p>
+              <p>Firestore collection <b>users</b> • doc id = <b>uid</b> ของ Firebase Auth</p>
             </div>
           </div>
           <app-tabs :items="navItems" />
@@ -75,8 +242,6 @@
         </div>
 
         <div class="layout">
-
-          <!-- LEFT: รายชื่อผู้ใช้ -->
           <section class="card stack">
             <div class="status-bar" :class="statusType">
               <div>
@@ -89,7 +254,7 @@
             <div class="actions" style="justify-content:space-between;align-items:flex-start">
               <div>
                 <h2 style="margin:0">รายชื่อผู้ใช้</h2>
-                <p class="small">ดึงจาก Firestore collection <b>users</b> โดยตรง</p>
+                <p class="small">อ่านจาก Firestore collection <b>users</b> โดยตรง</p>
               </div>
               <div class="searchbar">
                 <input v-model="query" type="search" placeholder="ค้นหา email / uid / role" />
@@ -123,39 +288,36 @@
                     <td><span class="pill-sm" :class="u.active === false ? 'bad' : 'good'">{{ u.active === false ? 'false' : 'true' }}</span></td>
                   </tr>
                   <tr v-if="!filteredUsers.length">
-                    <td colspan="4" class="small" style="padding:20px;text-align:center">ไม่พบข้อมูลผู้ใช้ — ลอง <b>สร้าง User ใหม่</b> ทางขวา</td>
+                    <td colspan="4" class="small" style="padding:20px;text-align:center">ไม่พบข้อมูลผู้ใช้ — กด <b>สร้าง User ใหม่</b> ทางขวา</td>
                   </tr>
                 </tbody>
               </table>
             </div>
           </section>
 
-          <!-- RIGHT: Edit / Create Panel -->
           <section class="card stack">
-
-            <!-- Mode Tabs -->
             <div class="mode-tabs">
               <button :class="['mode-tab', { active: rightMode === 'edit' }]" @click="switchMode('edit')">✏️ แก้ไข / Role</button>
               <button :class="['mode-tab', { active: rightMode === 'create' }]" @click="switchMode('create')">➕ สร้าง User ใหม่</button>
             </div>
 
-            <!-- ===== EDIT MODE ===== -->
             <template v-if="rightMode === 'edit'">
               <div>
                 <h2 style="margin:0">แก้ไข role</h2>
-                <p class="small">เลือกแถวทางซ้าย แล้วปรับ role / active / note ได้</p>
+                <p class="small">เลือกผู้ใช้จากตารางด้านซ้าย แล้วค่อยแก้ role / active / email / display name</p>
               </div>
 
-              <div class="helper-box">
-                <b>Firestore mapping</b><br />
-                ระบบจะจับผู้ใช้จาก <b>uid</b> ก่อน ถ้าไม่ตรงจะลองจับด้วย <b>email</b> อีกครั้ง
+              <div class="selected-card" v-if="selectedUser">
+                <b>ผู้ใช้ที่เลือก</b><br />
+                UID: {{ selectedUser.uid }}<br />
+                Email: {{ selectedUser.email || '-' }}<br />
+                Role: {{ selectedUser.role || 'user' }}
+              </div>
+              <div class="helper-box" v-else>
+                เลือก user จากตารางทางซ้ายก่อน แล้วค่อยแก้ข้อมูล
               </div>
 
               <div class="form-grid">
-                <div class="field span-2">
-                  <label>UID</label>
-                  <input v-model="form.uid" placeholder="Firebase Auth UID" />
-                </div>
                 <div class="field">
                   <label>Email</label>
                   <input v-model="form.email" type="email" placeholder="name@example.com" />
@@ -188,28 +350,24 @@
               <div class="actions">
                 <button class="btn primary" @click="save" :disabled="saving">{{ saving ? 'กำลังบันทึก...' : 'บันทึก role' }}</button>
                 <button class="btn ghost" @click="syncCurrentUser" :disabled="saving">ซิงก์ current auth user</button>
-                <button class="btn ghost" @click="newUser">ล้างฟอร์ม</button>
+                <button class="btn ghost" @click="clearSelection">ล้างการเลือก</button>
                 <button class="btn danger" @click="remove" :disabled="!selectedKey || saving">ลบ doc นี้</button>
               </div>
 
               <div class="hint">
-                <b>🔑 ทำไม Firebase Auth user ไม่ขึ้นในหน้านี้?</b><br />
-                เพราะหน้านี้อ่านจาก <b>Firestore collection "users"</b> เท่านั้น ไม่ใช่จาก Firebase Auth โดยตรง<br />
-                → กด <b>➕ สร้าง User ใหม่</b> เพื่อสร้างบัญชีพร้อม role ได้เลย
+                หน้านี้อ่านจาก <b>Firestore collection users</b> เท่านั้น ไม่ได้อ่านจาก Firebase Auth โดยตรง<br />
+                ดังนั้นเวลา create user จะต้องสร้าง Auth ก่อน แล้วค่อยเขียน document ลง <b>users/{uid}</b> อีกที
               </div>
             </template>
 
-            <!-- ===== CREATE MODE ===== -->
             <template v-else>
               <div>
                 <h2 style="margin:0">สร้าง User ใหม่</h2>
-                <p class="small">สร้างบัญชีใน <b>Firebase Auth</b> + บันทึก <b>role ลง Firestore</b> พร้อมกัน</p>
+                <p class="small">สร้างบัญชีใน Firebase Auth แล้วบันทึก role ลง Firestore collection <b>users</b></p>
               </div>
 
               <div class="pw-safe">
-                🔐 <b>Password ปลอดภัย 100%</b><br />
-                Password จะถูกส่งไปที่ <b>Firebase Authentication เท่านั้น</b> — ไม่ถูกเก็บใน Firestore หรือที่ใดเลย<br />
-                masteradmin จะยังคง login อยู่ปกติ (ใช้ REST API ไม่ใช่ SDK signup)
+                🔐 Password จะส่งไปที่ <b>Firebase Authentication</b> เท่านั้น — ไม่ถูกเก็บใน Firestore
               </div>
 
               <div class="form-grid">
@@ -218,11 +376,11 @@
                   <input v-model="createForm.email" type="email" placeholder="user@example.com" autocomplete="off" />
                 </div>
                 <div class="field">
-                  <label>Display Name (ชื่อ)</label>
+                  <label>Display Name</label>
                   <input v-model="createForm.displayName" placeholder="ชื่อ-นามสกุล" autocomplete="off" />
                 </div>
                 <div class="field">
-                  <label>Password <span class="req">*</span> <span class="small">(อย่างน้อย 6 ตัว)</span></label>
+                  <label>Password <span class="req">*</span></label>
                   <input v-model="createForm.password" type="password" placeholder="••••••••" autocomplete="new-password" />
                 </div>
                 <div class="field">
@@ -247,16 +405,12 @@
               </div>
 
               <div class="hint">
-                <b>ขั้นตอนที่เกิดขึ้นเมื่อกด สร้าง User:</b><br />
-                1. สร้างบัญชีใน Firebase Authentication (uid + email + password ที่ hash แล้ว)<br />
-                2. บันทึก uid + email + displayName + <b>role</b> ลง Firestore collection users<br />
-                3. Password <b>ไม่ถูกเก็บไว้ที่ Firestore เลย</b> ✅<br /><br />
-                <b>ต้องแก้ Firestore Rules ไหม?</b><br />
-                ถ้า masteradmin เขียน Firestore ได้ปกติ → ไม่ต้องแก้<br />
-                ถ้าพบ error permission-denied → ไปแก้ที่ Firebase Console → Firestore → Rules
+                ขั้นตอนเมื่อกดสร้าง:<br />
+                1) สร้างบัญชีใน Firebase Auth<br />
+                2) เขียน document ลง <b>users/{uid}</b> พร้อม <b>uid / email / role / active</b><br />
+                3) ตารางด้านซ้ายจะอัปเดตอัตโนมัติจาก Firestore
               </div>
             </template>
-
           </section>
         </div>
       </div>

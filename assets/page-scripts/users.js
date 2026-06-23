@@ -1,5 +1,7 @@
-const { createApp, ref, computed, onMounted } = Vue;
-const common = window.CheckinCommon;
+const { createApp, ref, computed, onMounted, onBeforeUnmount } = Vue;
+const common = window.CheckinCommon || {};
+const db = firebase.firestore();
+const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
 
 function createEmptyUser() {
   return {
@@ -23,6 +25,22 @@ function createEmptyCreateForm() {
   };
 }
 
+function normalizeUser(docSnap) {
+  const data = typeof docSnap?.data === "function" ? (docSnap.data() || {}) : (docSnap || {});
+  const uid = String(data.uid || docSnap?.id || "").trim();
+  return {
+    uid,
+    email: data.email || "",
+    displayName: data.displayName || "",
+    role: data.role || "user",
+    active: data.active !== false,
+    note: data.note || "",
+    visibleAreas: data.visibleAreas || "",
+    ...data,
+    uid,
+  };
+}
+
 createApp({
   setup() {
     const session = ref(null);
@@ -32,15 +50,16 @@ createApp({
     const creating = ref(false);
     const query = ref("");
     const selectedKey = ref("");
+    const selectedUser = ref(null);
     const form = ref(createEmptyUser());
     const statusType = ref("loading");
     const statusTitle = ref("กำลังตรวจสอบสิทธิ์");
     const statusDesc = ref("โหลด session และข้อมูลจาก Firestore users");
     const navItems = computed(() => common.getNavItems(session.value?.role || "masteradmin", "users"));
 
-    // === Right Panel Mode ===
-    const rightMode = ref("edit"); // "edit" | "create"
+    const rightMode = ref("edit");
     const createForm = ref(createEmptyCreateForm());
+    let unsubscribeUsers = null;
 
     const filteredUsers = computed(() => {
       const q = query.value.trim().toLowerCase();
@@ -69,13 +88,7 @@ createApp({
       statusDesc.value = desc;
     }
 
-    function newUser() {
-      selectedKey.value = "";
-      form.value = createEmptyUser();
-    }
-
-    function pickUser(user) {
-      selectedKey.value = rowKey(user);
+    function resetFormFromUser(user) {
       form.value = {
         uid: user.uid || "",
         email: user.email || "",
@@ -85,6 +98,19 @@ createApp({
         note: user.note || "",
         visibleAreas: user.visibleAreas || "",
       };
+    }
+
+    function clearSelection() {
+      selectedKey.value = "";
+      selectedUser.value = null;
+      form.value = createEmptyUser();
+    }
+
+    function pickUser(user) {
+      const normalized = normalizeUser(user);
+      selectedKey.value = normalized.uid;
+      selectedUser.value = normalized;
+      resetFormFromUser(normalized);
       rightMode.value = "edit";
     }
 
@@ -103,31 +129,72 @@ createApp({
     async function loadSession() {
       const s = await FirebaseRole.currentSession(false);
       session.value = s;
+
       if (!s) {
         location.replace("./index.html");
         return false;
       }
+
       if (s.role !== "masteradmin") {
         setStatus("error", "ไม่มีสิทธิ์เข้าหน้านี้", "หน้านี้เปิดให้ masteradmin เท่านั้น");
         return false;
       }
+
       return true;
+    }
+
+    async function loadUsersOnce() {
+      const snap = await db.collection("users").get();
+      const list = snap.docs.map((d) => normalizeUser(d));
+      list.sort((a, b) => String(a.email || a.uid || "").localeCompare(String(b.email || b.uid || "")));
+      users.value = list;
+      if (!selectedKey.value && list.length) {
+        pickUser(list[0]);
+      }
+      setStatus("success", "โหลดสำเร็จ", `พบผู้ใช้ทั้งหมด ${list.length} รายการ`);
+    }
+
+    function startUsersListener() {
+      if (unsubscribeUsers) unsubscribeUsers();
+
+      loading.value = true;
+      setStatus("loading", "กำลังโหลด users", "อ่านข้อมูลจาก Firestore collection users");
+
+      unsubscribeUsers = db.collection("users").onSnapshot(
+        (snap) => {
+          const list = snap.docs.map((d) => normalizeUser(d));
+          list.sort((a, b) => String(a.email || a.uid || "").localeCompare(String(b.email || b.uid || "")));
+          users.value = list;
+
+          if (selectedKey.value) {
+            const matched = list.find((u) => rowKey(u) === selectedKey.value);
+            if (matched) {
+              selectedUser.value = matched;
+              resetFormFromUser(matched);
+            }
+          } else if (!selectedUser.value && list.length) {
+            pickUser(list[0]);
+          }
+
+          if (loading.value) {
+            setStatus("success", "โหลดสำเร็จ", `พบผู้ใช้ทั้งหมด ${list.length} รายการ`);
+          }
+          loading.value = false;
+        },
+        (err) => {
+          loading.value = false;
+          setStatus("error", "โหลดไม่สำเร็จ", err?.message || "อ่าน users จาก Firestore ไม่ได้");
+        }
+      );
     }
 
     async function reload() {
       loading.value = true;
-      setStatus("loading", "กำลังโหลด users", "ดึงข้อมูลจาก Firestore collection users");
+      setStatus("loading", "กำลังรีเฟรช", "ดึงข้อมูลล่าสุดจาก Firestore");
       try {
-        const list = await CheckinCommon.getUsers();
-        users.value = Array.isArray(list)
-          ? [...list].sort((a, b) => String(a.email || a.uid || "").localeCompare(String(b.email || b.uid || "")))
-          : [];
-        if (!selectedKey.value && users.value.length) {
-          pickUser(users.value[0]);
-        }
-        setStatus("success", "โหลดสำเร็จ", `พบผู้ใช้ทั้งหมด ${users.value.length} รายการ`);
+        await loadUsersOnce();
       } catch (err) {
-        setStatus("error", "โหลดไม่สำเร็จ", err?.message || "อ่าน users จาก Firestore ไม่ได้");
+        setStatus("error", "รีเฟรชไม่สำเร็จ", err?.message || "เกิดข้อผิดพลาด");
       } finally {
         loading.value = false;
       }
@@ -137,9 +204,11 @@ createApp({
       try {
         saving.value = true;
         setStatus("loading", "กำลังซิงก์ผู้ใช้ปัจจุบัน", "ดึง session จาก Firebase Auth แล้วบันทึกลง Firestore users");
+
         const s = await FirebaseRole.currentSession(false);
         if (!s?.user) throw new Error("ไม่พบ session ปัจจุบัน");
-        await CheckinCommon.saveUser({
+
+        const payload = {
           uid: s.user.uid,
           email: s.user.email || "",
           displayName: s.user.displayName || s.user.email || "",
@@ -147,13 +216,15 @@ createApp({
           active: true,
           note: form.value.note || "",
           visibleAreas: form.value.visibleAreas || "",
-        });
+          updatedAt: serverTimestamp(),
+        };
+
+        await db.collection("users").doc(s.user.uid).set(payload, { merge: true });
+        selectedKey.value = s.user.uid;
         await reload();
-        const matched = users.value.find((u) =>
-          String(u.uid || "") === String(s.user.uid || "") ||
-          String(u.email || "").toLowerCase() === String(s.user.email || "").toLowerCase()
-        );
+        const matched = users.value.find((u) => rowKey(u) === s.user.uid);
         if (matched) pickUser(matched);
+
         setStatus("success", "ซิงก์สำเร็จ", "บันทึกข้อมูลจากบัญชีที่ล็อกอินอยู่ลง Firestore แล้ว");
       } catch (err) {
         setStatus("error", "ซิงก์ไม่สำเร็จ", err?.message || "เกิดข้อผิดพลาด");
@@ -165,15 +236,31 @@ createApp({
     async function save() {
       try {
         if (session.value?.role !== "masteradmin") throw new Error("masteradmin เท่านั้นที่แก้ role ได้");
-        if (!String(form.value.uid || form.value.email || "").trim()) throw new Error("กรุณาใส่ uid หรือ email อย่างน้อย 1 ค่า");
+
+        const uid = String(selectedKey.value || form.value.uid || "").trim();
+        if (!uid) throw new Error("กรุณาเลือก user จากตารางด้านซ้ายก่อน");
+
         saving.value = true;
-        setStatus("loading", "กำลังบันทึก", "กำลังอัปเดตเอกสารใน Firestore users");
-        await CheckinCommon.saveUser(form.value);
+        setStatus("loading", "กำลังบันทึก", "กำลังอัปเดต document ใน Firestore users");
+
+        const payload = {
+          uid,
+          email: String(form.value.email || "").trim(),
+          displayName: String(form.value.displayName || "").trim(),
+          role: String(form.value.role || "user"),
+          active: form.value.active !== false,
+          note: String(form.value.note || ""),
+          visibleAreas: String(form.value.visibleAreas || ""),
+          updatedAt: serverTimestamp(),
+        };
+
+        await db.collection("users").doc(uid).set(payload, { merge: true });
         await reload();
-        const key = String(form.value.uid || form.value.email || "");
-        const found = users.value.find((u) => rowKey(u) === key || String(u.email || "").toLowerCase() === String(form.value.email || "").toLowerCase());
+
+        const found = users.value.find((u) => rowKey(u) === uid);
         if (found) pickUser(found);
-        setStatus("success", "บันทึกเรียบร้อย", "role ถูกอัปเดตแล้ว");
+
+        setStatus("success", "บันทึกเรียบร้อย", "role / active / email ถูกอัปเดตแล้ว");
       } catch (err) {
         setStatus("error", "บันทึกไม่สำเร็จ", err?.message || "เกิดข้อผิดพลาด");
       } finally {
@@ -184,13 +271,14 @@ createApp({
     async function remove() {
       try {
         if (session.value?.role !== "masteradmin") throw new Error("masteradmin เท่านั้นที่ลบได้");
-        const key = String(form.value.uid || form.value.email || "").trim();
-        if (!key) throw new Error("ยังไม่ได้เลือก user");
-        if (!confirm(`ลบ user นี้ใช่ไหม?\n${key}`)) return;
+        const uid = String(selectedKey.value || "").trim();
+        if (!uid) throw new Error("ยังไม่ได้เลือก user");
+        if (!confirm(`ลบ user นี้ใช่ไหม?\n${uid}`)) return;
+
         saving.value = true;
         setStatus("loading", "กำลังลบ", "กำลังลบเอกสารจาก Firestore users");
-        await CheckinCommon.deleteUser(form.value);
-        newUser();
+        await db.collection("users").doc(uid).delete();
+        clearSelection();
         await reload();
         setStatus("success", "ลบแล้ว", "เอกสารถูกลบเรียบร้อย");
       } catch (err) {
@@ -200,8 +288,6 @@ createApp({
       }
     }
 
-    // ✅ สร้าง Firebase Auth user + Firestore doc พร้อมกัน
-    // Password ไม่ถูกเก็บที่ไหนเลย — ส่งไปแค่ Firebase Auth REST API
     async function createNewUser() {
       try {
         const f = createForm.value;
@@ -218,37 +304,36 @@ createApp({
         if (session.value?.role !== "masteradmin") throw new Error("masteradmin เท่านั้นที่สร้าง user ได้");
 
         creating.value = true;
-        setStatus("loading", "กำลังสร้างบัญชี Firebase Auth", "ใช้ REST API สร้างบัญชี — masteradmin ยังคง login อยู่...");
+        setStatus("loading", "กำลังสร้างบัญชี Firebase Auth", "ใช้ REST API สร้างบัญชี — masteradmin ยังคง login อยู่");
 
-        // Step 1: สร้าง Firebase Auth user ผ่าน REST API (ไม่กระทบ session ปัจจุบัน)
         const authUser = await CheckinCommon.createAuthUser(email, password, displayName);
+        if (!authUser?.uid) throw new Error("สร้าง Firebase Auth ไม่สำเร็จ");
 
-        setStatus("loading", "กำลังบันทึก Role ลง Firestore", `สร้าง document สำหรับ ${authUser.email}...`);
+        setStatus("loading", "กำลังบันทึกลง Firestore", `กำลังสร้าง document users/${authUser.uid}`);
 
-        // Step 2: บันทึก role ลง Firestore (password ไม่ถูกเก็บ)
-        await CheckinCommon.saveUser({
+        const payload = {
           uid: authUser.uid,
-          email: authUser.email,
-          displayName: authUser.displayName || displayName || authUser.email,
+          email: authUser.email || email,
+          displayName: authUser.displayName || displayName || authUser.email || email,
           role,
           active: true,
           note: "",
           visibleAreas: "",
-        });
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        };
 
-        // Step 3: Reload แล้ว select user ที่เพิ่งสร้าง
-        await reload();
-        const found = users.value.find((u) =>
-          String(u.uid || "") === authUser.uid ||
-          String(u.email || "").toLowerCase() === authUser.email.toLowerCase()
-        );
-        if (found) pickUser(found);
+        await db.collection("users").doc(authUser.uid).set(payload, { merge: true });
 
-        // Reset form → กลับ edit mode
         createForm.value = createEmptyCreateForm();
         rightMode.value = "edit";
+        selectedKey.value = authUser.uid;
+        await reload();
 
-        setStatus("success", "สร้าง User สำเร็จ ✅", `${authUser.email} (${role}) ถูกสร้างใน Firebase Auth + Firestore แล้ว`);
+        const found = users.value.find((u) => rowKey(u) === authUser.uid);
+        if (found) pickUser(found);
+
+        setStatus("success", "สร้าง User สำเร็จ ✅", `${payload.email} (${role}) ถูกบันทึกลง Auth + Firestore แล้ว`);
       } catch (err) {
         setStatus("error", "สร้าง User ไม่สำเร็จ", err?.message || "เกิดข้อผิดพลาด");
       } finally {
@@ -260,10 +345,16 @@ createApp({
       try {
         const ok = await loadSession();
         if (!ok) return;
+
         await reload();
+        startUsersListener();
       } catch (err) {
         setStatus("error", "ไม่สามารถเริ่มหน้า Users ได้", err?.message || "ตรวจสอบ Firebase ไม่สำเร็จ");
       }
+    });
+
+    onBeforeUnmount(() => {
+      if (unsubscribeUsers) unsubscribeUsers();
     });
 
     return {
@@ -274,6 +365,7 @@ createApp({
       creating,
       query,
       selectedKey,
+      selectedUser,
       form,
       createForm,
       rightMode,
@@ -285,7 +377,7 @@ createApp({
       rowKey,
       roleClass,
       pickUser,
-      newUser,
+      clearSelection,
       switchMode,
       save,
       remove,
@@ -295,5 +387,5 @@ createApp({
       logout,
     };
   },
-  template: '#users-template'
-}).mount('#app');
+  template: "#users-template",
+}).mount("#app");
