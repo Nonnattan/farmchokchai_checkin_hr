@@ -36,6 +36,8 @@ const { createApp, ref, computed, onMounted, nextTick } = Vue;
             const t = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).replace(/-/g, "").slice(0, 10).toUpperCase();
             token.value = t;
             qrUrl.value = url;
+            // บันทึกค่าที่เลือกลง localStorage เมื่อสร้าง QR
+            localStorage.setItem("qr_selected_area_id", selectedId.value);
             new QRCode(qrEl.value, {
               text: url,
               width: 240,
@@ -59,7 +61,37 @@ const { createApp, ref, computed, onMounted, nextTick } = Vue;
               const visible = common.getVisibleAreas(raw, sessionInfo.role, sessionInfo.user.uid);
               areas.value = visible.length ? visible : raw;
               if (!areas.value.length) areas.value = [common.DEFAULT_AREA];
-              selectedId.value = new URLSearchParams(location.search).get("areaId") || areas.value[0].areaId;
+              
+              // อ่าน areaId จาก URL ก่อน ถ้าไม่มีให้ใช้ค่าจาก localStorage ถ้าไม่มีให้ใช้ตัวแรก
+              const urlAreaId = new URLSearchParams(location.search).get("areaId");
+              const savedAreaId = localStorage.getItem("qr_selected_area_id");
+              
+              console.log("Debug - urlAreaId:", urlAreaId);
+              console.log("Debug - savedAreaId:", savedAreaId);
+              console.log("Debug - areas:", areas.value.map(a => ({ areaId: a.areaId, areaName: a.areaName })));
+              
+              // ถ้ามี urlAreaId ให้พยายามหาพื้นที่ที่ตรงกับ areaId หรือ qr_code
+              if (urlAreaId) {
+                const foundByUrl = areas.value.find(a => 
+                  String(a.areaId).trim() === String(urlAreaId).trim() ||
+                  String(a.qr_code).trim() === String(urlAreaId).trim()
+                );
+                if (foundByUrl) {
+                  selectedId.value = foundByUrl.areaId;
+                  console.log("Debug - Found by URL:", foundByUrl.areaId);
+                } else {
+                  console.warn("Debug - areaId from URL not found, using fallback");
+                  selectedId.value = savedAreaId || areas.value[0].areaId;
+                }
+              } else {
+                selectedId.value = savedAreaId || areas.value[0].areaId;
+              }
+              
+              // บันทึกค่าที่เลือกลง localStorage
+              localStorage.setItem("qr_selected_area_id", selectedId.value);
+              
+              console.log("Debug - Final selectedId:", selectedId.value);
+              
               await nextTick();
               buildQR();
               setStatus("success", "QR พร้อมใช้งาน", "สแกนเพื่อเปิดหน้าผู้ใช้ตามพื้นที่ที่เลือก");

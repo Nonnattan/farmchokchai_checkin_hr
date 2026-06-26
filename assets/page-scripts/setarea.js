@@ -385,9 +385,22 @@
           const list = Array.isArray(data?.data) ? data.data.map(normalizeArea) : [];
           this.areas = list.length ? list : [normalizeArea(DEFAULT_AREA)];
 
-          const idToSelect = selectId || this.selectedId || this.editing.areaId || this.areas[0]?.areaId || DEFAULT_AREA.areaId;
-          const found = this.areas.find((a) => a.areaId === idToSelect) || this.areas[0];
-          if (found) this.applyArea(found, false);
+          // ถ้ามีการส่ง selectId มา ให้ใช้ค่านั้น มิฉะนั้นใช้ selectedId ปัจจุบัน
+          const idToSelect = selectId || this.selectedId;
+          
+          // ค้นหาพื้นที่ที่ตรงกับ ID ที่ต้องการ
+          const found = this.areas.find((a) => a.areaId === idToSelect);
+          
+          // ถ้าพบพื้นที่ที่ตรงกับ ID ให้ใช้พื้นที่นั้น
+          if (found) {
+            this.applyArea(found, false);
+          } else if (this.areas.length > 0) {
+            // ถ้าไม่พบแต่มีพื้นที่อื่นอยู่ ให้ใช้พื้นที่แรก
+            this.applyArea(this.areas[0], false);
+          } else {
+            // ถ้าไม่มีพื้นที่เลย ให้ใช้ค่า default
+            this.applyArea(normalizeArea(DEFAULT_AREA), false);
+          }
 
           this.setStatus("success", "โหลดพื้นที่แล้ว", `พบพื้นที่ ${this.areas.length} รายการ`);
         } catch (err) {
@@ -504,16 +517,24 @@
             // Changed Action from "areas" to "location"
             const refreshData = await requestJson("location", null, "GET", 20000);
             const refreshed = Array.isArray(refreshData?.data) ? refreshData.data.map(normalizeArea) : [];
+            console.log("Debug - Refreshed areas count:", refreshed.length);
+            console.log("Debug - Refreshed areas:", refreshed.map(a => ({ areaId: a.areaId, areaName: a.areaName })));
             if (refreshed.length) {
               this.areas = refreshed;
               const found = refreshed.find((a) => String(a.areaId || "").trim() === savedId) || saved;
+              console.log("Debug - Found area after refresh:", found?.areaId);
               this.applyArea(found, true);
+            } else {
+              console.warn("Debug - No areas returned from refresh, keeping current areas");
             }
           } catch (refreshErr) {
             console.warn("refresh after save skipped:", refreshErr);
           }
 
           this.setStatus("success", "บันทึกสำเร็จ", `พื้นที่ ${savedId} ถูกเขียนลง Sheet แล้ว`);
+          
+          // เคลียร์ฟอร์มเพื่อให้เพิ่มพื้นที่ใหม่ต่อได้เลย
+          this.newArea();
         } catch (err) {
           console.error(err);
           this.setStatus(

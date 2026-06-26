@@ -3,7 +3,7 @@
   const PENDING_KEY = "pending_checkin_payload";
   const LAST_CHECKIN_KEY = "last_checkin";
   const AREA_CACHE_KEY = "checkin_area_cache";
-  const API_URL = "https://script.google.com/macros/s/AKfycbzfvb_rb9yBC8FceB3lP_m74-QTNc9eHRn47LcjDk2LtI4VHmYefiR0ipv35UDKzqhy/exec";
+  const API_URL = "https://script.google.com/macros/s/AKfycbxYEKgDnqx-Re0a66Yl7sVBHcWxFLQBvkPBP2iKQQyR2NeZu2weEplIhBghR02vO9Py/exec";
   const LIFF_ID = "2008594376-aBuTJTic";
 
   const DEFAULT_AREA = {
@@ -69,9 +69,10 @@
 
   function normalizeArea(raw) {
     const source = raw || {};
+    // ใช้ qr_code เป็นหลัก แต่รองรับ areaId เพื่อความเข้ากันได้
     const areaId = String(
-      source.areaId ||
       source.qr_code ||
+      source.areaId ||
       source.id ||
       source.code ||
       source.siteId ||
@@ -79,11 +80,12 @@
       "qr_code",
     ).trim() || "qr_code";
 
+    // areaName อาจมากจาก remark, areaName, siteName, หรือ qr_code
     const areaName = String(
+      source.remark ||
       source.areaName ||
       source.siteName ||
       source.site ||
-      source.remark ||
       source.note ||
       source.qr_code ||
       readSiteName() ||
@@ -92,6 +94,7 @@
 
     return {
       areaId,
+      qr_code: areaId, // เพิ่ม qr_code เพื่อความสอดคล้อง
       areaName,
       centerLat: toNumberOr(source.centerLat ?? source.lat, DEFAULT_AREA.centerLat),
       centerLng: toNumberOr(source.centerLng ?? source.lng, DEFAULT_AREA.centerLng),
@@ -99,10 +102,11 @@
       southMeters: Math.max(0, toNumberOr(source.southMeters ?? source.south, DEFAULT_AREA.southMeters)),
       eastMeters: Math.max(0, toNumberOr(source.eastMeters ?? source.east, DEFAULT_AREA.eastMeters)),
       westMeters: Math.max(0, toNumberOr(source.westMeters ?? source.west, DEFAULT_AREA.westMeters)),
-      note: String(source.note ?? source.remark ?? DEFAULT_AREA.note).trim() || DEFAULT_AREA.note,
+      note: String(source.remark ?? source.note ?? DEFAULT_AREA.note).trim() || DEFAULT_AREA.note,
+      remark: String(source.remark ?? source.note ?? DEFAULT_AREA.note).trim() || DEFAULT_AREA.note,
       active: source.active === false ? false : true,
-      visibleRoles: String(source.visibleRoles ?? source.assign ?? DEFAULT_AREA.visibleRoles).trim() || DEFAULT_AREA.visibleRoles,
-      visibleUsers: String(source.visibleUsers ?? source.email ?? source.allowedUsers ?? "").trim(),
+      visibleRoles: String(source.assign ?? source.visibleRoles ?? DEFAULT_AREA.visibleRoles).trim() || DEFAULT_AREA.visibleRoles,
+      visibleUsers: String(source.email ?? source.visibleUsers ?? source.allowedUsers ?? "").trim(),
       assign: String(source.assign ?? source.visibleRoles ?? DEFAULT_AREA.visibleRoles).trim() || DEFAULT_AREA.visibleRoles,
       email: String(source.email ?? source.visibleUsers ?? source.allowedUsers ?? "").trim(),
       updatedAt: String(source.updatedAt || "").trim(),

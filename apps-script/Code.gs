@@ -1,4 +1,4 @@
-const SPREADSHEET_ID = "1VxuvC0OwqQ_wlsQsjFq3y3XiTeh_CBCKXOf1iz_fGf4";
+const SPREADSHEET_ID = "1CqGpZZP9jofU5EcKC2G3J60tiO2cSw7flTn4ZAJH4X0";
 const LOGS_SHEET_NAME = "Logs";
 const AREAS_SHEET_NAME = "location"; // legacy sheet name kept for compatibility
 const AREA_ASSIGNMENTS_SHEET_NAME = "AreaAssignments";
@@ -20,8 +20,7 @@ const LOG_HEADERS = [
   "status",
 ];
 
-// Legacy schema used by the existing spreadsheet screenshot.
-// Keep this order so the sheet stays familiar.
+// Schema ตรงกับ Google Sheet จริง
 const AREA_HEADERS = [
   "lat",
   "lng",
@@ -30,7 +29,6 @@ const AREA_HEADERS = [
   "east",
   "west",
   "remark",
-  "location",
   "assign",
   "email",
   "qr_code",
@@ -190,6 +188,7 @@ function getSheetDataAsObjects(sheetName) {
 
 function handleGetLocation() {
   const data = getSheetDataAsObjects("location");
+  console.log("Debug - handleGetLocation returned " + data.length + " areas");
   return { ok: true, data: data };
 }
 
@@ -197,44 +196,29 @@ function saveLocation(payload) {
   const sheet = getSheetByNameOrCreate("location");
   const data = sheet.getDataRange().getValues();
 
-  // โครงสร้าง Header ของชีต location
+  // โครงสร้าง Header ของชีต location (ตรงกับ Google Sheet จริง)
   const headers =
     data.length > 0
       ? data[0]
-      : [
-          "areaId",
-          "areaName",
-          "lat",
-          "lng",
-          "north",
-          "south",
-          "east",
-          "west",
-          "remark",
-          "assign",
-          "email",
-          "active",
-          "updatedAt",
-          "updatedBy",
-        ];
+      : AREA_HEADERS;
 
   if (data.length === 0) {
     sheet.appendRow(headers);
   }
 
-  // หา ID เดิมเพื่อเทียบ (ถ้ามีการแก้ไข ID)
+  // หา ID เดิมเพื่อเทียบ (ใช้ qr_code แทน areaId)
   const targetId = payload.originalAreaId
     ? String(payload.originalAreaId).trim()
-    : String(payload.areaId).trim();
-  const newId = String(payload.areaId).trim() || targetId;
+    : String(payload.qr_code || payload.areaId).trim();
+  const newId = String(payload.qr_code || payload.areaId).trim() || targetId;
 
   let rowIndex = -1;
-  const areaIdColIndex = headers.indexOf("areaId");
+  const qrCodeColIndex = headers.indexOf("qr_code");
 
-  // ค้นหาแถวที่ต้องการแก้ไข
-  if (areaIdColIndex > -1 && data.length > 1) {
+  // ค้นหาแถวที่ต้องการแก้ไขโดยใช้ qr_code
+  if (qrCodeColIndex > -1 && data.length > 1) {
     for (let i = 1; i < data.length; i++) {
-      if (String(data[i][areaIdColIndex]).trim() === targetId) {
+      if (String(data[i][qrCodeColIndex]).trim() === targetId) {
         rowIndex = i + 1; // +1 เพราะแถวใน Apps Script เริ่มที่ 1
         break;
       }
@@ -245,15 +229,22 @@ function saveLocation(payload) {
   const rowData = [];
   const savedObj = {};
 
-  // แมปข้อมูลลง Column
+  // แมปข้อมูลลง Column (ตรงกับ Google Sheet จริง)
   for (let j = 0; j < headers.length; j++) {
     const h = headers[j];
     let val = payload[h] !== undefined ? payload[h] : "";
 
-    if (h === "areaId") val = newId;
-    if (h === "updatedAt") val = now;
-    if (h === "active")
-      val = val !== false && String(val).toLowerCase() !== "false";
+    // Map ค่าจาก payload ไปยัง column ที่ตรงกับ Google Sheet
+    if (h === "qr_code") val = newId;
+    if (h === "lat") val = payload.lat || payload.centerLat || "";
+    if (h === "lng") val = payload.lng || payload.centerLng || "";
+    if (h === "north") val = payload.north || payload.northMeters || "";
+    if (h === "south") val = payload.south || payload.southMeters || "";
+    if (h === "east") val = payload.east || payload.eastMeters || "";
+    if (h === "west") val = payload.west || payload.westMeters || "";
+    if (h === "remark") val = payload.remark || payload.note || payload.areaName || "";
+    if (h === "assign") val = payload.assign || payload.visibleRoles || "";
+    if (h === "email") val = payload.email || payload.visibleUsers || "";
 
     rowData.push(val);
     savedObj[h] = val;
@@ -275,18 +266,18 @@ function saveLocation(payload) {
 }
 
 function deleteLocation(payload) {
-  const targetId = String(payload.areaId).trim();
-  if (!targetId) throw new Error("ไม่พบ areaId ที่ต้องการลบ");
+  const targetId = String(payload.qr_code || payload.areaId).trim();
+  if (!targetId) throw new Error("ไม่พบ qr_code ที่ต้องการลบ");
 
   const sheet = getSheetByNameOrCreate("location");
   const data = sheet.getDataRange().getValues();
 
   if (data.length > 0) {
-    const areaIdColIndex = data[0].indexOf("areaId");
-    if (areaIdColIndex > -1) {
+    const qrCodeColIndex = data[0].indexOf("qr_code");
+    if (qrCodeColIndex > -1) {
       // ไล่ลบจากล่างขึ้นบน ป้องกัน index คลาดเคลื่อน
       for (let i = data.length - 1; i > 0; i--) {
-        if (String(data[i][areaIdColIndex]).trim() === targetId) {
+        if (String(data[i][qrCodeColIndex]).trim() === targetId) {
           sheet.deleteRow(i + 1);
         }
       }
