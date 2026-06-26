@@ -3,8 +3,8 @@
   const PENDING_KEY = "pending_checkin_payload";
   const LAST_CHECKIN_KEY = "last_checkin";
   const AREA_CACHE_KEY = "checkin_area_cache";
-  const API_URL = "https://script.google.com/macros/s/AKfycbyU0MchhC88K1UXTDmzTleaHZITf8-2IVF3UNZmeBnRzkBkyUzEUjzkwI53H9Ttjgnf/exec";
-  const LIFF_ID = "2008594376-hmZ7K2H2";
+  const API_URL = "https://script.google.com/macros/s/AKfycbzfvb_rb9yBC8FceB3lP_m74-QTNc9eHRn47LcjDk2LtI4VHmYefiR0ipv35UDKzqhy/exec";
+  const LIFF_ID = "2008594376-aBuTJTic";
 
   const DEFAULT_AREA = {
     areaId: "qr_code",
@@ -52,7 +52,7 @@
       const text = String(name || "").trim();
       if (!text) localStorage.removeItem(SITE_NAME_KEY);
       else localStorage.setItem(SITE_NAME_KEY, text);
-    } catch (e) {}
+    } catch (e) { }
   }
 
   function toNumberOr(value, fallback) {
@@ -175,7 +175,7 @@
   }
 
   function cacheAreas(list) {
-    try { localStorage.setItem(getAreaCacheKey(), JSON.stringify(list || [])); } catch (e) {}
+    try { localStorage.setItem(getAreaCacheKey(), JSON.stringify(list || [])); } catch (e) { }
   }
 
   function readCachedAreas() {
@@ -184,7 +184,8 @@
 
   async function getAreas(timeoutMs = 15000) {
     try {
-      const data = await requestJson("areas", null, "GET", timeoutMs);
+      // Changed Action from "areas" to "location"
+      const data = await requestJson("location", null, "GET", timeoutMs);
       const list = normalizeAreaList(data);
       cacheAreas(list);
       return list;
@@ -195,13 +196,18 @@
 
   async function getArea(areaId, timeoutMs = 15000) {
     const list = await getAreas(timeoutMs);
-    const id = String(areaId || "default");
-    return list.find((a) => a.areaId === id) || list[0] || normalizeArea(DEFAULT_AREA);
+    const id = String(areaId || "").trim();
+    if (!id) return list[0] || normalizeArea(DEFAULT_AREA);
+    
+    // พยายามหาพื้นที่ที่ตรงกับ ID ที่ส่งมา (รองรับทั้ง areaId และ qr_code)
+    const found = list.find((a) => String(a.areaId).trim() === id || String(a.qr_code).trim() === id);
+    return found || list[0] || normalizeArea(DEFAULT_AREA);
   }
 
   async function saveArea(area, timeoutMs = 20000) {
     const normalized = normalizeArea(area);
-    const data = await requestJson("areas", {
+    // Changed Action from "areas" to "location"
+    const data = await requestJson("location", {
       ...normalized,
       originalAreaId: String(area?.originalAreaId || area?.previousAreaId || normalized.areaId || "").trim(),
     }, "POST", timeoutMs);
@@ -210,7 +216,8 @@
   }
 
   async function deleteArea(areaId, timeoutMs = 15000) {
-    const data = await requestJson("areas", { areaId: String(areaId || "") , actionType: "delete" }, "POST", timeoutMs);
+    // Changed Action from "areas" to "location"
+    const data = await requestJson("location", { areaId: String(areaId || ""), actionType: "delete" }, "POST", timeoutMs);
     return data;
   }
 
@@ -364,8 +371,6 @@
     return list.map(normalizeUser).filter(Boolean);
   }
 
-
-
   function normalizeConfig(raw) {
     const area = normalizeArea(raw);
     return {
@@ -426,8 +431,8 @@
 
     const items =
       r === "masteradmin" ? masterNav :
-      r === "admin" ? adminNav :
-      userNav;
+        r === "admin" ? adminNav :
+          userNav;
 
     return items.map((item) => ({
       ...item,
@@ -436,250 +441,250 @@
   }
 
   const DEFAULT_CONFIG = normalizeConfig(DEFAULT_AREA);
-function getFirestoreDb() {
-  try {
-    if (window.FIREBASE_DB) return window.FIREBASE_DB;
-    if (window.firebase && typeof firebase.firestore === "function") return firebase.firestore();
-  } catch (err) {}
-  return null;
-}
 
-const BOOTSTRAP_MASTERADMIN_EMAILS = ["admin@gmail.com"];
-
-function isBootstrapMasteradminEmail(email) {
-  const normalized = String(email || "").trim().toLowerCase();
-  return BOOTSTRAP_MASTERADMIN_EMAILS.includes(normalized);
-}
-
-function firestoreDocToUser(doc) {
-  const data = typeof doc?.data === "function" ? doc.data() : (doc?.data || {});
-  return normalizeUser({
-    ...data,
-    uid: data.uid || doc?.id || "",
-    email: data.email || "",
-    displayName: data.displayName || "",
-    role: data.role || "user",
-    active: data.active,
-    visibleAreas: data.visibleAreas || "",
-    note: data.note || "",
-    updatedAt: data.updatedAt || "",
-    updatedBy: data.updatedBy || "",
-  });
-}
-
-function filterUsers(list, options) {
-  const filters = options && typeof options === "object" ? options : {};
-  return list.filter((u) => {
-    if (filters.uid && String(u.uid || "") !== String(filters.uid)) return false;
-    if (filters.email && String(u.email || "").toLowerCase() !== String(filters.email).toLowerCase()) return false;
-    if (filters.role && String(u.role || "").toLowerCase() !== String(filters.role).toLowerCase()) return false;
-    if (filters.active !== undefined && filters.active !== null && filters.active !== "") {
-      const expected = String(filters.active).toLowerCase();
-      const actual = String(u.active).toLowerCase();
-      if (expected === "true" && actual !== "true") return false;
-      if (expected === "false" && actual !== "false") return false;
-    }
-    return true;
-  });
-}
-
-async function getFirestoreUsers(options = null) {
-  const db = getFirestoreDb();
-  if (!db) return null;
-  const snap = await db.collection("users").get();
-  const list = snap.docs.map((doc) => firestoreDocToUser(doc));
-  return filterUsers(list, typeof options === "string" ? { email: options } : options);
-}
-
-async function findFirestoreUserRef(userLike) {
-  const db = getFirestoreDb();
-  if (!db) return null;
-  const uid = String(userLike?.uid || "").trim();
-  const email = String(userLike?.email || "").trim().toLowerCase();
-
-  if (uid) {
-    const byId = await db.collection("users").doc(uid).get();
-    if (byId.exists) return byId.ref;
+  function getFirestoreDb() {
+    try {
+      if (window.FIREBASE_DB) return window.FIREBASE_DB;
+      if (window.firebase && typeof firebase.firestore === "function") return firebase.firestore();
+    } catch (err) { }
+    return null;
   }
 
-  if (email) {
-    const snap = await db.collection("users").where("email", "==", email).limit(1).get();
-    if (!snap.empty) return snap.docs[0].ref;
+  const BOOTSTRAP_MASTERADMIN_EMAILS = ["admin@gmail.com"];
+
+  function isBootstrapMasteradminEmail(email) {
+    const normalized = String(email || "").trim().toLowerCase();
+    return BOOTSTRAP_MASTERADMIN_EMAILS.includes(normalized);
   }
 
-  return null;
-}
-
-async function getFirestoreUserByIdentity(userLike) {
-  const db = getFirestoreDb();
-  if (!db) return null;
-
-  const ref = await findFirestoreUserRef(userLike);
-  if (!ref) return null;
-
-  const snap = await ref.get();
-  if (!snap.exists) return null;
-
-  return firestoreDocToUser(snap);
-}
-async function getUsers(options = null, timeoutMs = 15000) {
-  try {
-    const list = await getFirestoreUsers(options);
-    if (Array.isArray(list)) return list;
-  } catch (err) {
-    console.warn("Firestore users fallback:", err);
-  }
-
-  const payload = {};
-  if (typeof options === "string") {
-    payload.email = options;
-  } else if (options && typeof options === "object") {
-    Object.entries(options).forEach(([key, value]) => {
-      if (value === undefined || value === null || value === "") return;
-      payload[key] = value;
+  function firestoreDocToUser(doc) {
+    const data = typeof doc?.data === "function" ? doc.data() : (doc?.data || {});
+    return normalizeUser({
+      ...data,
+      uid: data.uid || doc?.id || "",
+      email: data.email || "",
+      displayName: data.displayName || "",
+      role: data.role || "user",
+      active: data.active,
+      visibleAreas: data.visibleAreas || "",
+      note: data.note || "",
+      updatedAt: data.updatedAt || "",
+      updatedBy: data.updatedBy || "",
     });
   }
-  const data = await requestJson("users", payload, "GET", timeoutMs);
-  return normalizeUserList(data);
-}
 
-async function saveUser(user, timeoutMs = 20000) {
-  const normalized = normalizeUser(user);
-  const db = getFirestoreDb();
+  function filterUsers(list, options) {
+    const filters = options && typeof options === "object" ? options : {};
+    return list.filter((u) => {
+      if (filters.uid && String(u.uid || "") !== String(filters.uid)) return false;
+      if (filters.email && String(u.email || "").toLowerCase() !== String(filters.email).toLowerCase()) return false;
+      if (filters.role && String(u.role || "").toLowerCase() !== String(filters.role).toLowerCase()) return false;
+      if (filters.active !== undefined && filters.active !== null && filters.active !== "") {
+        const expected = String(filters.active).toLowerCase();
+        const actual = String(u.active).toLowerCase();
+        if (expected === "true" && actual !== "true") return false;
+        if (expected === "false" && actual !== "false") return false;
+      }
+      return true;
+    });
+  }
 
-  if (db) {
-    const docId = String(normalized.uid || normalized.email || "").trim();
-    if (!docId) {
+  async function getFirestoreUsers(options = null) {
+    const db = getFirestoreDb();
+    if (!db) return null;
+    const snap = await db.collection("users").get();
+    const list = snap.docs.map((doc) => firestoreDocToUser(doc));
+    return filterUsers(list, typeof options === "string" ? { email: options } : options);
+  }
+
+  async function findFirestoreUserRef(userLike) {
+    const db = getFirestoreDb();
+    if (!db) return null;
+    const uid = String(userLike?.uid || "").trim();
+    const email = String(userLike?.email || "").trim().toLowerCase();
+
+    if (uid) {
+      const byId = await db.collection("users").doc(uid).get();
+      if (byId.exists) return byId.ref;
+    }
+
+    if (email) {
+      const snap = await db.collection("users").where("email", "==", email).limit(1).get();
+      if (!snap.empty) return snap.docs[0].ref;
+    }
+
+    return null;
+  }
+
+  async function getFirestoreUserByIdentity(userLike) {
+    const db = getFirestoreDb();
+    if (!db) return null;
+
+    const ref = await findFirestoreUserRef(userLike);
+    if (!ref) return null;
+
+    const snap = await ref.get();
+    if (!snap.exists) return null;
+
+    return firestoreDocToUser(snap);
+  }
+
+  async function getUsers(options = null, timeoutMs = 15000) {
+    try {
+      const list = await getFirestoreUsers(options);
+      if (Array.isArray(list)) return list;
+    } catch (err) {
+      console.warn("Firestore users fallback:", err);
+    }
+
+    const payload = {};
+    if (typeof options === "string") {
+      payload.email = options;
+    } else if (options && typeof options === "object") {
+      Object.entries(options).forEach(([key, value]) => {
+        if (value === undefined || value === null || value === "") return;
+        payload[key] = value;
+      });
+    }
+    const data = await requestJson("users", payload, "GET", timeoutMs);
+    return normalizeUserList(data);
+  }
+
+  async function saveUser(user, timeoutMs = 20000) {
+    const normalized = normalizeUser(user);
+    const db = getFirestoreDb();
+
+    if (db) {
+      const docId = String(normalized.uid || normalized.email || "").trim();
+      if (!docId) {
+        throw new Error("missing_user_id");
+      }
+      const payload = {
+        ...normalized,
+        uid: normalized.uid || docId,
+        email: normalized.email || "",
+        updatedAt: new Date().toISOString(),
+      };
+      await db.collection("users").doc(docId).set(payload, { merge: true });
+      return { ok: true, data: payload };
+    }
+
+    const data = await requestJson("users", normalized, "POST", timeoutMs);
+    return data;
+  }
+
+  async function deleteUser(user, timeoutMs = 15000) {
+    const normalized = normalizeUser(user);
+    const db = getFirestoreDb();
+
+    if (db) {
+      const ref = await findFirestoreUserRef(normalized);
+      if (ref) {
+        await ref.delete();
+        return { ok: true };
+      }
+
+      const docId = String(normalized.uid || normalized.email || "").trim();
+      if (docId) {
+        await db.collection("users").doc(docId).delete().catch(() => { });
+        return { ok: true };
+      }
       throw new Error("missing_user_id");
     }
+
     const payload = {
-      ...normalized,
-      uid: normalized.uid || docId,
-      email: normalized.email || "",
-      updatedAt: new Date().toISOString(),
+      uid: normalized.uid,
+      email: normalized.email,
+      actionType: "delete",
     };
-    await db.collection("users").doc(docId).set(payload, { merge: true });
-    return { ok: true, data: payload };
+    return await requestJson("users", payload, "POST", timeoutMs);
   }
 
-  const data = await requestJson("users", normalized, "POST", timeoutMs);
-  return data;
-}
+  // สร้าง Firebase Auth user ผ่าน REST API
+  // → ไม่ logout masteradmin ที่ login อยู่
+  // → password ไม่ถูกเก็บใน Firestore เลย
+  async function createAuthUser(email, password, displayName) {
+    const cfg = window.FIREBASE_CONFIG || {};
+    const apiKey = String(cfg.apiKey || "").trim();
+    if (!apiKey) throw new Error("ไม่พบ Firebase API Key ใน FIREBASE_CONFIG");
 
-async function deleteUser(user, timeoutMs = 15000) {
-  const normalized = normalizeUser(user);
-  const db = getFirestoreDb();
+    const url = "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=" + apiKey;
+    const body = {
+      email: String(email || "").trim(),
+      password: String(password || ""),
+      returnSecureToken: false,
+    };
+    if (displayName) body.displayName = String(displayName).trim();
 
-  if (db) {
-    const ref = await findFirestoreUserRef(normalized);
-    if (ref) {
-      await ref.delete();
-      return { ok: true };
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok || data.error) {
+      const code = String(data && data.error && data.error.message || "").split(" : ")[0].trim();
+      const thaiMsg = {
+        "EMAIL_EXISTS": "อีเมลนี้มีบัญชีอยู่ใน Firebase Authentication แล้ว",
+        "INVALID_EMAIL": "รูปแบบอีเมลไม่ถูกต้อง",
+        "WEAK_PASSWORD": "รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร",
+        "MISSING_PASSWORD": "กรุณากรอกรหัสผ่าน",
+        "MISSING_EMAIL": "กรุณากรอกอีเมล",
+        "OPERATION_NOT_ALLOWED": "การสมัครด้วย email/password ถูกปิดอยู่ — เปิดใน Firebase Console → Authentication → Sign-in method",
+        "TOO_MANY_ATTEMPTS_TRY_LATER": "ร้องขอมากเกินไป กรุณาลองใหม่ภายหลัง",
+      };
+      throw new Error(thaiMsg[code] || (data && data.error && data.error.message) || "สร้าง Firebase Auth user ไม่สำเร็จ");
     }
 
-    const docId = String(normalized.uid || normalized.email || "").trim();
-    if (docId) {
-      await db.collection("users").doc(docId).delete().catch(() => {});
-      return { ok: true };
-    }
-    throw new Error("missing_user_id");
-  }
-
-  const payload = {
-    uid: normalized.uid,
-    email: normalized.email,
-    actionType: "delete",
-  };
-  return await requestJson("users", payload, "POST", timeoutMs);
-}
-
-// สร้าง Firebase Auth user ผ่าน REST API
-// → ไม่ logout masteradmin ที่ login อยู่
-// → password ไม่ถูกเก็บใน Firestore เลย
-async function createAuthUser(email, password, displayName) {
-  const cfg = window.FIREBASE_CONFIG || {};
-  const apiKey = String(cfg.apiKey || "").trim();
-  if (!apiKey) throw new Error("ไม่พบ Firebase API Key ใน FIREBASE_CONFIG");
-
-  const url = "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=" + apiKey;
-  const body = {
-    email: String(email || "").trim(),
-    password: String(password || ""),
-    returnSecureToken: false,
-  };
-  if (displayName) body.displayName = String(displayName).trim();
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  const data = await res.json();
-
-  if (!res.ok || data.error) {
-    const code = String(data && data.error && data.error.message || "").split(" : ")[0].trim();
-    const thaiMsg = {
-      "EMAIL_EXISTS": "อีเมลนี้มีบัญชีอยู่ใน Firebase Authentication แล้ว",
-      "INVALID_EMAIL": "รูปแบบอีเมลไม่ถูกต้อง",
-      "WEAK_PASSWORD": "รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร",
-      "MISSING_PASSWORD": "กรุณากรอกรหัสผ่าน",
-      "MISSING_EMAIL": "กรุณากรอกอีเมล",
-      "OPERATION_NOT_ALLOWED": "การสมัครด้วย email/password ถูกปิดอยู่ — เปิดใน Firebase Console → Authentication → Sign-in method",
-      "TOO_MANY_ATTEMPTS_TRY_LATER": "ร้องขอมากเกินไป กรุณาลองใหม่ภายหลัง",
+    return {
+      uid: String(data.localId || ""),
+      email: String(data.email || email || "").toLowerCase(),
+      displayName: String(data.displayName || displayName || ""),
     };
-    throw new Error(thaiMsg[code] || (data && data.error && data.error.message) || "สร้าง Firebase Auth user ไม่สำเร็จ");
   }
 
-  return {
-    uid: String(data.localId || ""),
-    email: String(data.email || email || "").toLowerCase(),
-    displayName: String(data.displayName || displayName || ""),
-  };
-}
+  async function resolveUserAccess(sessionLike, timeoutMs = 15000) {
+    const user = sessionLike?.user || sessionLike || null;
+    const uid = String(user?.uid || sessionLike?.uid || "").trim();
+    const email = String(user?.email || sessionLike?.email || "").trim().toLowerCase();
 
-async function resolveUserAccess(sessionLike, timeoutMs = 15000) {
-  const user = sessionLike?.user || sessionLike || null;
-  const uid = String(user?.uid || sessionLike?.uid || "").trim();
-  const email = String(user?.email || sessionLike?.email || "").trim().toLowerCase();
+    let matched = null;
 
-  let matched = null;
+    try {
+      matched = await getFirestoreUserByIdentity({ uid, email });
+    } catch (err) { }
 
-  try {
-    matched = await getFirestoreUserByIdentity({ uid, email });
-  } catch (err) {}
+    if (!matched) {
+      const users = await getUsers({}, timeoutMs).catch(() => []);
+      matched = users.find((u) => {
+        if (uid && String(u.uid || "") === uid) return true;
+        if (email && String(u.email || "").toLowerCase() === email) return true;
+        return false;
+      }) || null;
+    }
 
-  if (!matched) {
-    const users = await getUsers({}, timeoutMs).catch(() => []);
-    matched = users.find((u) => {
-      if (uid && String(u.uid || "") === uid) return true;
-      if (email && String(u.email || "").toLowerCase() === email) return true;
-      return false;
-    }) || null;
+    const bootstrapRole = isBootstrapMasteradminEmail(email) ? "masteradmin" : null;
+    const role = bootstrapRole || matched?.role || "user";
+
+    return {
+      user: matched,
+      uid,
+      email,
+      role,
+      active: matched?.active === false ? false : true,
+    };
   }
 
-  const bootstrapRole = isBootstrapMasteradminEmail(email) ? "masteradmin" : null;
-  const role = bootstrapRole || matched?.role || "user";
+  function getRoleLabel(role) {
+    const r = String(role || "user").toLowerCase();
+    if (r === "masteradmin") return "masteradmin";
+    if (r === "admin") return "admin";
+    return "user";
+  }
 
-  return {
-    user: matched,
-    uid,
-    email,
-    role,
-    active: matched?.active === false ? false : true,
-  };
-}
-
-function getRoleLabel(role) {
-  const r = String(role || "user").toLowerCase();
-  if (r === "masteradmin") return "masteradmin";
-  if (r === "admin") return "admin";
-  return "user";
-}
-
-
-window.CheckinCommon = {
-
+  window.CheckinCommon = {
     DEFAULT_AREA,
     DEFAULT_CONFIG,
     API_URL,

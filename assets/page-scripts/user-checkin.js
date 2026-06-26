@@ -54,6 +54,7 @@ function withTimeout(promise, ms, message) {
           const subMessage = ref("กดปุ่มด้านล่างเพื่อเริ่มเช็กอิน");
 
           const query = new URLSearchParams(location.search);
+          const areaId = query.get("areaId") || query.get("site") || "default";
           const session = query.get("session") || "-";
           const site = computed(
             () => query.get("site") || config.value.siteName || "-",
@@ -92,7 +93,7 @@ function withTimeout(promise, ms, message) {
 
           async function loadConfig() {
             try {
-              config.value = await common.getConfig();
+              config.value = await common.getConfig(areaId);
             } catch (err) {
               console.error(err);
               setStatus(
@@ -304,15 +305,31 @@ function withTimeout(promise, ms, message) {
                       "📍 อยู่ในพื้นที่ทำงาน",
                       "ตรวจสอบสำเร็จ! ระบบกำลังบันทึกข้อมูลและนำคุณไปยังหน้าถัดไป...",
                     );
+                    
+                    // ป้องกันการกดย้ำๆ แล้วข้ามผ่าน: เคลียร์ค่าเก่าก่อนบันทึกใหม่
                     clearPendingFlow();
+                    common.clearPendingCheckin?.();
 
                     const payload = buildPayload(lat, lng, accuracy);
+                    // เพิ่มข้อมูลเพื่อการตรวจสอบที่เข้มงวดขึ้น
+                    payload.clientVerified = true;
+                    payload.areaId = areaId;
+                    
                     common.setPendingCheckin(payload);
 
+                    // ล็อคปุ่มทันทีเพื่อป้องกันการกดย้ำในจังหวะเปลี่ยนหน้า
+                    loading.value = true;
+
                     setTimeout(() => {
-                      location.replace("../processing.html");
-                      resolve(true);
-                    }, 500);
+                      // ใช้ window.location.href แทน replace เพื่อความชัวร์ในบาง browser
+                      // และตรวจสอบอีกครั้งว่า payload ยังอยู่
+                      if (common.getPendingCheckin()) {
+                         window.location.href = "../processing.html";
+                      } else {
+                         loading.value = false;
+                         resolve(false);
+                      }
+                    }, 800);
                   } else {
                     clearPendingFlow();
                     common.clearPendingCheckin?.();

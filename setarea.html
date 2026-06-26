@@ -104,8 +104,8 @@
 
       .layout {
         display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 18px;
+        grid-template-columns: 0.95fr 1.05fr;
+        gap: 20px;
       }
 
       .stack {
@@ -121,9 +121,9 @@
         justify-content: space-between;
         gap: 12px;
         padding: 14px 16px;
-        border-radius: 16px;
+        border-radius: 14px;
+        background: #f8fafc;
         border: 1px solid var(--line);
-        background: var(--bg);
       }
 
       .status-bar.success {
@@ -143,8 +143,8 @@
 
       .status-title {
         margin: 0;
-        font-size: 15px;
-        font-weight: 800;
+        font-weight: 700;
+        color: #0f172a;
       }
 
       .status-sub {
@@ -157,14 +157,23 @@
       .spinner {
         width: 16px;
         height: 16px;
-        border: 2px solid rgba(255, 255, 255, 0.4);
-        border-top-color: #fff;
+        border: 2px solid #bfdbfe;
+        border-top-color: #2563eb;
         border-radius: 50%;
         animation: spin 0.8s linear infinite;
         flex: none;
       }
 
       .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .actions-left,
+      .actions-right {
         display: flex;
         flex-wrap: wrap;
         gap: 10px;
@@ -208,11 +217,14 @@
         transform: none;
       }
 
-      .info-box {
-        padding: 16px;
-        background: #fafbff;
-        border: 1px dashed #c7d2fe;
-        border-radius: 18px;
+      .helper-box {
+        padding: 14px 16px;
+        border-radius: 16px;
+        background: #f8fafc;
+        border: 1px solid var(--line);
+        font-size: 13px;
+        color: #475569;
+        line-height: 1.6;
       }
 
       .row {
@@ -222,114 +234,46 @@
         align-items: center;
       }
 
-      .pill {
+      .pill-sm {
         display: inline-flex;
         align-items: center;
-        padding: 7px 11px;
+        padding: 6px 10px;
         border-radius: 999px;
         font-size: 12px;
         font-weight: 800;
+        background: #eff6ff;
+        color: #1d4ed8;
       }
 
-      .pill.success {
+      .pill-sm.good {
         background: #ecfdf3;
-        color: var(--success);
+        color: #047857;
       }
 
-      .pill.warning {
-        background: #fffbeb;
-        color: var(--warning);
-      }
-
-      .pill.danger {
+      .pill-sm.bad {
         background: #fef2f2;
-        color: var(--danger);
+        color: #b91c1c;
       }
 
-      .mini-note {
-        font-size: 13px;
-        color: var(--muted);
-        line-height: 1.6;
-        margin: 10px 0 0;
+      .pill-sm.warning {
+        background: #fffbeb;
+        color: #92400e;
       }
 
-      .assign-select {
-        min-height: 220px;
-        width: 100%;
-      }
-
-      .assign-help {
-        font-size: 12px;
-        color: var(--muted);
-        line-height: 1.5;
-        margin: 8px 0 0;
-      }
-
-      .assign-toolbar {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-top: 10px;
-      }
-
-      .assign-list {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-        gap: 10px;
-        margin-top: 10px;
-      }
-
-      .assign-item {
+      .section-head {
         display: flex;
         align-items: flex-start;
-        gap: 10px;
-        padding: 12px 14px;
-        border: 1px solid var(--line);
-        border-radius: 16px;
-        background: #fff;
-        transition: border-color .15s ease, background .15s ease, transform .15s ease;
-        cursor: pointer;
+        justify-content: space-between;
+        gap: 12px;
       }
 
-      .assign-item:hover {
-        transform: translateY(-1px);
+      .section-head h2 {
+        margin: 0;
+        font-size: 20px;
       }
 
-      .assign-item.selected {
-        background: #eff6ff;
-        border-color: #bfdbfe;
-      }
-
-      .assign-item input {
-        margin-top: 4px;
-        transform: scale(1.05);
-      }
-
-      .assign-item .meta {
-        font-size: 12px;
-        color: var(--muted);
-        line-height: 1.45;
-      }
-
-      .assign-empty {
-        padding: 14px;
-        border: 1px dashed #cbd5e1;
-        border-radius: 16px;
-        background: #f8fafc;
-        color: var(--muted);
+      .small {
         font-size: 13px;
-      }
-
-      .assign-actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-top: 10px;
-      }
-
-      .assign-meta {
-        margin-top: 8px;
-        font-size: 12px;
         color: var(--muted);
       }
 
@@ -340,28 +284,30 @@
         background: #fff;
       }
 
-      table {
+      .table {
         width: 100%;
         border-collapse: collapse;
-        min-width: 900px;
+        min-width: 920px;
       }
 
-      thead th {
-        background: #f8fafc;
+      .table th,
+      .table td {
+        padding: 12px 10px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      .table th {
+        font-size: 13px;
+        color: #475467;
+        background: #fafbff;
         position: sticky;
         top: 0;
         z-index: 1;
-        text-align: left;
-        font-size: 13px;
-        color: #334155;
-        padding: 14px 12px;
-        border-bottom: 1px solid var(--line);
       }
 
-      tbody td {
-        padding: 14px 12px;
-        border-bottom: 1px solid #eef2f7;
-        vertical-align: top;
+      .table td {
         font-size: 14px;
       }
 
@@ -375,11 +321,6 @@
 
       .click-row.active {
         background: #eff6ff;
-      }
-
-      .small {
-        font-size: 12px;
-        color: var(--muted);
       }
 
       .map-shell {
@@ -423,17 +364,31 @@
         height: 100%;
       }
 
+      .selected-card {
+        padding: 14px 16px;
+        border-radius: 16px;
+        background: #fff7ed;
+        border: 1px solid #fed7aa;
+        font-size: 13px;
+        color: #9a3412;
+        line-height: 1.6;
+      }
+
       .form-card {
         padding: 16px;
         background: #fafbff;
-        border: 1px dashed #c7d2fe;
+        border: 1px solid var(--line);
         border-radius: 18px;
       }
 
-      .field-grid {
+      .form-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
+      }
+
+      .span-2 {
+        grid-column: 1 / -1;
       }
 
       .field {
@@ -460,25 +415,155 @@
         background: #fff;
       }
 
+      .field input:focus,
+      .field textarea:focus,
+      .field select:focus {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+      }
+
       .field textarea {
         min-height: 90px;
         resize: vertical;
       }
 
-      .section-title {
-        margin: 0;
-        font-size: 20px;
+      .assign-help,
+      .hint {
+        font-size: 13px;
+        color: #64748b;
+        line-height: 1.6;
       }
 
-      .page-subtitle {
-        margin: 4px 0 0;
+      .assign-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .searchbar {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+
+      .searchbar input {
+        width: min(360px, 100%);
+      }
+
+      .assign-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 10px;
+        margin-top: 10px;
+      }
+
+      .assign-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #ffffff; /* พื้นหลังเริ่มต้นเป็นสีขาวเสมอ */
+        transition: all 0.2s ease;
+        cursor: pointer;
+        position: relative;
+      }
+
+      .assign-item:hover {
+        border-color: #cbd5e1;
+        background: #f8fafc;
+      }
+
+      .assign-item.selected {
+        background: #eff6ff !important;
+        border-color: #3b82f6 !important;
+        box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.1);
+      }
+
+      .assign-item input {
+        margin-top: 4px;
+        transform: scale(1.05);
+      }
+
+      .assign-item .meta {
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.45;
+      }
+
+      .assign-empty {
+        padding: 14px;
+        border: 1px dashed #cbd5e1;
+        border-radius: 16px;
+        background: #f8fafc;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .assign-meta {
+        margin-top: 8px;
+        font-size: 12px;
         color: var(--muted);
       }
 
-      .top-actions {
+      .assign-container {
+        background: #ffffff;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 16px;
+        margin-top: 10px;
+      }
+
+      .assign-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 12px;
+        margin-top: 16px;
+      }
+
+      .assign-item {
         display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 14px;
+        border: 1px solid var(--line); /* เส้นขอบปกติ */
+        border-radius: 14px;
+        background: #ffffff; /* พื้นหลังปกติ */
+        transition: all 0.2s ease;
+        cursor: pointer;
+      }
+
+      .assign-item:hover {
+        border-color: #cbd5e1;
+        background: #f8fafc;
+      }
+
+      .assign-item.selected {
+        background: #eff6ff !important; /* สีน้ำเงินจาง */
+        border-color: #3b82f6 !important; /* เส้นขอบสีน้ำเงิน */
+        box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.1);
+      }
+
+      .assign-item input[type="checkbox"] {
+        margin-top: 3px;
+        width: 18px;
+        height: 18px;
+        accent-color: #2563eb;
+      }
+
+      .user-info b {
+        display: block;
+        color: #1e293b;
+        font-size: 14px;
+      }
+
+      .user-info .meta {
+        font-size: 12px;
+        color: #64748b;
+        margin-top: 2px;
       }
 
       @keyframes spin {
@@ -487,9 +572,17 @@
         }
       }
 
-      @media (max-width: 1200px) {
+      @media (max-width: 1100px) {
         .layout {
           grid-template-columns: 1fr;
+        }
+
+        .form-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .span-2 {
+          grid-column: auto;
         }
 
         .map-wrap {
@@ -507,265 +600,345 @@
           align-items: flex-start;
         }
 
-        .field-grid {
-          grid-template-columns: 1fr;
+        .actions {
+          flex-direction: column;
+          align-items: stretch;
+        }
+
+        .actions-left,
+        .actions-right {
+          width: 100%;
+        }
+
+        .searchbar input {
+          width: 100%;
         }
       }
     </style>
   </head>
+
   <body>
     <div id="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-badge">SA</div>
-          <div>
-            <h1>SetArea</h1>
-            <p>
-              ตั้งค่าพื้นที่เช็กอินด้วยแผนที่ กำหนด role ที่มองเห็นพื้นที่ และเลือก admin/masteradmin จาก Firestore users ได้
-            </p>
-          </div>
-        </div>
-
-        <app-tabs :items="navItems"></app-tabs>
-      </header>
-
-      <div class="layout">
-        <section class="card stack">
-          <div class="status-bar" :class="statusClass">
+      <div class="container">
+        <header class="topbar">
+          <div class="brand">
+            <div class="brand-badge">SA</div>
             <div>
-              <p class="status-title">{{ statusTitle }}</p>
-              <p class="status-sub">{{ statusDesc }}</p>
-            </div>
-            <div v-if="loading || saving" class="spinner"></div>
-          </div>
-
-          <div class="actions">
-            <button class="btn primary" @click="newArea">+ เพิ่มพื้นที่</button>
-            <button
-              class="btn ghost"
-              @click="restoreSelected"
-              :disabled="loading"
-            >
-              รีโหลดพื้นที่ที่เลือก
-            </button>
-            <button class="btn ghost" @click="save" :disabled="saving">
-              {{ saving ? 'กำลังบันทึก...' : 'บันทึก' }}
-            </button>
-            <button class="btn danger" @click="removeArea" :disabled="saving">
-              ลบพื้นที่
-            </button>
-          </div>
-
-          <div class="info-box">
-            <div class="row">
-              <span class="pill success">Areas: {{ totalAreas }}</span>
-              <span class="pill warning">Role: masteradmin</span>
-              <span class="pill danger">Sheet: location</span>
-            </div>
-            <p class="mini-note">
-              คลิกชื่อพื้นที่ในตารางเพื่อย้าย marker ไปตำแหน่งนั้น หรือลาก
-              marker / คลิกบนแผนที่เพื่อปรับศูนย์กลางใหม่
-            </p>
-          </div>
-
-          <div>
-            <h2 class="section-title">ตารางพื้นที่</h2>
-            <p class="page-subtitle">
-              ใช้แถวนี้เพื่อเลือกพื้นที่ที่ต้องการแก้ไข
-            </p>
-
-            <div class="table-wrap" style="margin-top: 12px">
-              <table>
-                <thead>
-                  <tr>
-                    <th>พื้นที่</th>
-                    <th>พิกัด</th>
-                    <th>ขอบเขต</th>
-                    <th>Assign</th>
-                    <th>Email</th>
-                    <th>สถานะ</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr
-                    v-for="area in areas"
-                    :key="area.areaId"
-                    class="click-row"
-                    :class="{ active: area.areaId === selectedId }"
-                    @click="pickArea(area)"
-                  >
-                    <td>
-                      <b>{{ area.areaName }}</b><br />
-                      <span class="small">{{ area.areaId }}</span><br />
-                      <span class="small">{{ area.remark || '-' }}</span>
-                    </td>
-                    <td class="small">
-                      Lat {{ formatNumber(area.lat) }}<br />
-                      Lng {{ formatNumber(area.lng) }}
-                    </td>
-                    <td class="small">
-                      N/S/E/W<br />
-                      {{ area.north }}/{{ area.south }}/{{ area.east }}/{{
-                      area.west }}
-                    </td>
-                    <td class="small">{{ area.assign || '-' }}</td>
-                    <td class="small">{{ area.email || '-' }}</td>
-                    <td>
-                      <span
-                        class="pill"
-                        :style="{
-                          background: area.active === false ? '#fef2f2' : '#ecfdf3',
-                          color: area.active === false ? '#b91c1c' : '#047857'
-                        }"
-                      >
-                        {{ area.active === false ? 'inactive' : 'active' }}
-                      </span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+              <h1>SetArea</h1>
+              <p>
+                ตั้งค่าพื้นที่เช็กอินด้วยแผนที่ • กำหนด role ที่มองเห็นพื้นที่ •
+                เลือก admin/masteradmin จาก Firestore users
+              </p>
             </div>
           </div>
-        </section>
 
-        <section class="card stack">
-          <div>
-            <h2 class="section-title">Map Preview</h2>
-            <p class="page-subtitle">
-              พื้นที่ที่เลือกจะมี marker และกรอบสี่เหลี่ยมแสดงทันที
-            </p>
-          </div>
+          <app-tabs :items="navItems"></app-tabs>
+          <a class="btn ghost" href="#" @click.prevent="logout">Logout</a>
+        </header>
 
-          <div class="map-shell">
-            <div class="map-hint">
-              <div class="map-label">
-                <b>{{ editing.areaName }}</b><br />
-                {{ editing.areaId }}
+        <div class="layout">
+          <section class="card stack">
+            <div class="status-bar" :class="statusClass">
+              <div>
+                <p class="status-title">{{ statusTitle }}</p>
+                <p class="status-sub">{{ statusDesc }}</p>
               </div>
+              <div v-if="loading || saving" class="spinner"></div>
+            </div>
+
+            <div class="actions">
+              <div class="actions-left">
+                <button class="btn" @click="newArea">กลับพื้นที่</button>
+                <button
+                  class="btn ghost"
+                  @click="restoreSelected"
+                  :disabled="loading"
+                >
+                  รีโหลดพื้นที่ที่เลือก
+                </button>
+                <button class="btn ghost" @click="save" :disabled="saving">
+                  {{ saving ? 'กำลังบันทึก...' : 'บันทึก' }}
+                </button>
+                <button
+                  class="btn danger"
+                  @click="removeArea"
+                  :disabled="saving"
+                >
+                  ลบพื้นที่
+                </button>
+              </div>
+            </div>
+
+            <div class="helper-box">
               <div class="row">
-                <span class="pill success">Draggable marker</span>
-                <span class="pill warning">Boundary frame</span>
+                <span class="pill-sm good">Areas: {{ totalAreas }}</span>
+                <span class="pill-sm warning">Role: masteradmin</span>
+                <span class="pill-sm bad">Sheet: location</span>
               </div>
-            </div>
-            <div class="map-wrap">
-              <div ref="mapEl" class="map"></div>
-            </div>
-          </div>
-
-          <div class="form-card">
-            <h3 style="margin: 0 0 10px">แก้ไขพื้นที่ที่เลือก</h3>
-
-            <div class="field-grid">
-              <div class="field">
-                <label>qr_code / areaId</label>
-                <input v-model="editing.areaId" placeholder="qr_code" />
-              </div>
-              <div class="field">
-                <label>areaName</label>
-                <input v-model="editing.areaName" placeholder="qr_code" />
-              </div>
-
-              <div class="field">
-                <label>lat</label>
-                <input
-                  v-model.number="editing.lat"
-                  type="number"
-                  step="0.000001"
-                />
-              </div>
-              <div class="field">
-                <label>lng</label>
-                <input
-                  v-model.number="editing.lng"
-                  type="number"
-                  step="0.000001"
-                />
-              </div>
-
-              <div class="field">
-                <label>north</label>
-                <input v-model.number="editing.north" type="number" min="0" />
-              </div>
-              <div class="field">
-                <label>south</label>
-                <input v-model.number="editing.south" type="number" min="0" />
-              </div>
-
-              <div class="field">
-                <label>east</label>
-                <input v-model.number="editing.east" type="number" min="0" />
-              </div>
-              <div class="field">
-                <label>west</label>
-                <input v-model.number="editing.west" type="number" min="0" />
+              <div style="margin-top: 8px">
+                คลิกชื่อพื้นที่ในตารางเพื่อย้าย marker ไปตำแหน่งนั้น หรือลาก
+                marker / คลิกบนแผนที่เพื่อปรับศูนย์กลางใหม่
               </div>
             </div>
 
-            <div class="field" style="margin-top: 12px">
-              <label>remark</label>
-              <textarea
-                v-model="editing.remark"
-                placeholder="รายละเอียดพื้นที่"
-              ></textarea>
+            <div class="section-head">
+              <div>
+                <h2>Assign Users</h2>
+                <div class="small">
+                  เลือกผู้ใช้จาก Firestore users ที่จะผูกกับพื้นที่นี้
+                </div>
+              </div>
             </div>
 
-            <div class="field-grid" style="margin-top: 12px">
-              <div class="field">
-                <label>assign (role)</label>
-                <input
-                  v-model="editing.assign"
-                  placeholder="masteradmin,admin"
-                />
-                <div class="assign-help">role นี้ใช้ควบคุมว่าใครเห็นพื้นที่นี้ในหน้าเช็กอิน</div>
+            <div class="field">
+              <label>ค้นหาอีเมลหรือชื่อเพื่อกรองรายชื่อ</label>
+              <input
+                v-model="assignSearch"
+                placeholder="ค้นหาอีเมลหรือชื่อเพื่อกรองรายชื่อ"
+              />
+              <div class="assign-toolbar">
+                <button
+                  class="btn ghost"
+                  type="button"
+                  @click="selectAllAssignableUsers"
+                >
+                  เลือกทั้งหมด
+                </button>
+                <button class="btn ghost" type="button" @click="clearAssignees">
+                  ล้างทั้งหมด
+                </button>
+                <button
+                  class="btn ghost"
+                  type="button"
+                  @click="loadAssignableUsers"
+                >
+                  รีเฟรชรายชื่อ
+                </button>
               </div>
-              <div class="field">
-                <label>email (checkbox เลือกได้เฉพาะ admin / masteradmin)</label>
+            </div>
+
+            <div v-if="filteredAssignableUsers.length" class="assign-list">
+              <label
+                v-for="u in filteredAssignableUsers"
+                :key="u.uid || u.email"
+                :class="['assign-item', { selected: isAssigneeSelected(u.email) }]"
+              >
                 <input
-                  v-model="assignSearch"
-                  placeholder="ค้นหาอีเมลหรือชื่อเพื่อกรองรายชื่อ"
+                  type="checkbox"
+                  :checked="isAssigneeSelected(u.email)"
+                  @change="toggleAssignee(u.email, $event.target.checked)"
                 />
-                <div class="assign-toolbar">
-                  <button class="btn ghost" type="button" @click="selectAllAssignableUsers">เลือกทั้งหมด</button>
-                  <button class="btn ghost" type="button" @click="clearAssignees">ล้างทั้งหมด</button>
-                  <button class="btn ghost" type="button" @click="loadAssignableUsers">รีเฟรชรายชื่อ</button>
+                <div>
+                  <div><b>{{ u.email }}</b></div>
+                  <div class="meta">
+                    {{ u.displayName || u.uid || '-' }} • {{ u.role }}
+                  </div>
+                </div>
+              </label>
+            </div>
+
+            <div v-else class="assign-empty">
+              ไม่พบรายชื่อ admin/masteradmin จาก Firestore users
+            </div>
+
+            <div class="assign-meta">
+              เลือกแล้ว {{ selectedAssigneeEmails.length }} คน
+            </div>
+            <div class="assign-help">
+              ระบบจะบันทึกเป็น many-to-many ลงชีต AreaAssignments
+              และเก็บรายการรวมไว้ที่คอลัมน์ email ของชีตพื้นที่
+            </div>
+
+            <div>
+              <div class="section-head">
+                <div>
+                  <h2>ตารางพื้นที่</h2>
+                  <div class="small">
+                    ใช้แถวนี้เพื่อเลือกพื้นที่ที่ต้องการแก้ไข
+                  </div>
+                </div>
+              </div>
+
+              <div class="table-wrap" style="margin-top: 12px">
+                <table class="table">
+                  <thead>
+                    <tr>
+                      <th>พื้นที่</th>
+                      <th>พิกัด</th>
+                      <th>ขอบเขต</th>
+                      <th>Assign</th>
+                      <th>Email</th>
+                      <th>สถานะ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      v-for="area in areas"
+                      :key="area.areaId"
+                      class="click-row"
+                      :class="{ active: area.areaId === selectedId }"
+                      @click="pickArea(area)"
+                    >
+                      <td>
+                        <b>{{ area.areaName }}</b><br />
+                        <span class="small">{{ area.areaId }}</span><br />
+                        <span class="small">{{ area.remark || '-' }}</span>
+                      </td>
+                      <td class="small">
+                        Lat {{ formatNumber(area.lat) }}<br />
+                        Lng {{ formatNumber(area.lng) }}
+                      </td>
+                      <td class="small">
+                        N/S/E/W<br />
+                        {{ area.north }}/{{ area.south }}/{{ area.east }}/{{
+                        area.west }}
+                      </td>
+                      <td class="small">{{ area.assign || '-' }}</td>
+                      <td class="small">{{ area.email || '-' }}</td>
+                      <td>
+                        <span
+                          class="pill-sm"
+                          :class="area.active === false ? 'bad' : 'good'"
+                        >
+                          {{ area.active === false ? 'inactive' : 'active' }}
+                        </span>
+                      </td>
+                    </tr>
+                    <tr v-if="!areas.length">
+                      <td
+                        colspan="6"
+                        class="small"
+                        style="padding: 20px; text-align: center"
+                      >
+                        ไม่พบข้อมูลพื้นที่
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <section class="card stack">
+            <div class="section-head">
+              <div>
+                <h2>Map Preview</h2>
+                <div class="small">
+                  พื้นที่ที่เลือกจะมี marker และกรอบสี่เหลี่ยมแสดงทันที
+                </div>
+              </div>
+            </div>
+
+            <div class="map-shell">
+              <div class="map-hint">
+                <div class="map-label">
+                  <b>{{ editing.areaName }}</b><br />
+                  {{ editing.areaId }}
+                </div>
+                <div class="row">
+                  <span class="pill-sm good">Draggable marker</span>
+                  <span class="pill-sm warning">Boundary frame</span>
+                </div>
+              </div>
+              <div class="map-wrap">
+                <div ref="mapEl" class="map"></div>
+              </div>
+            </div>
+
+            <div class="selected-card" v-if="selectedId">
+              <b>พื้นที่ที่เลือก</b><br />
+              ID: {{ editing.areaId }}<br />
+              Name: {{ editing.areaName }}<br />
+              Lat/Lng: {{ formatNumber(editing.lat) }}, {{
+              formatNumber(editing.lng) }}
+            </div>
+            <div class="helper-box" v-else>
+              เลือกพื้นที่จากตารางด้านซ้าย หรือกด
+              <b>+ เพิ่มพื้นที่</b> เพื่อสร้างรายการใหม่
+            </div>
+
+            <div class="form-card">
+              <h3 style="margin: 0 0 10px">แก้ไขพื้นที่ที่เลือก</h3>
+
+              <div class="form-grid">
+                <div class="field">
+                  <label>qr_code / areaId</label>
+                  <input v-model="editing.areaId" placeholder="qr_code" />
                 </div>
 
-                <div v-if="filteredAssignableUsers.length" class="assign-list">
-                  <label
-                    v-for="u in filteredAssignableUsers"
-                    :key="u.uid || u.email"
-                    :class="['assign-item', { selected: isAssigneeSelected(u.email) }]"
-                  >
-                    <input
-                      type="checkbox"
-                      :checked="isAssigneeSelected(u.email)"
-                      @change="toggleAssignee(u.email, $event.target.checked)"
-                    />
-                    <div>
-                      <div><b>{{ u.email }}</b></div>
-                      <div class="meta">{{ u.displayName || u.uid || '-' }} • {{ u.role }}</div>
-                    </div>
-                  </label>
+                <div class="field">
+                  <label>areaName</label>
+                  <input v-model="editing.areaName" placeholder="qr_code" />
                 </div>
 
-                <div v-else class="assign-empty">
-                  ไม่พบรายชื่อ admin/masteradmin จาก Firestore users
+                <div class="field">
+                  <label>lat</label>
+                  <input
+                    v-model.number="editing.lat"
+                    type="number"
+                    step="0.000001"
+                  />
                 </div>
 
-                <div class="assign-meta">เลือกแล้ว {{ selectedAssigneeEmails.length }} คน</div>
-                <div class="assign-help">ระบบจะบันทึกเป็น many-to-many ลงชีต AreaAssignments และเก็บรายการรวมไว้ที่คอลัมน์ email ของชีตพื้นที่</div>
+                <div class="field">
+                  <label>lng</label>
+                  <input
+                    v-model.number="editing.lng"
+                    type="number"
+                    step="0.000001"
+                  />
+                </div>
+
+                <div class="field">
+                  <label>north</label>
+                  <input v-model.number="editing.north" type="number" min="0" />
+                </div>
+
+                <div class="field">
+                  <label>south</label>
+                  <input v-model.number="editing.south" type="number" min="0" />
+                </div>
+
+                <div class="field">
+                  <label>east</label>
+                  <input v-model.number="editing.east" type="number" min="0" />
+                </div>
+
+                <div class="field">
+                  <label>west</label>
+                  <input v-model.number="editing.west" type="number" min="0" />
+                </div>
+
+                <div class="field span-2">
+                  <label>remark</label>
+                  <textarea
+                    v-model="editing.remark"
+                    placeholder="รายละเอียดพื้นที่"
+                  ></textarea>
+                </div>
+
+                <div class="field">
+                  <label>assign (role)</label>
+                  <input
+                    v-model="editing.assign"
+                    placeholder="masteradmin,admin"
+                  />
+                  <div class="assign-help">
+                    role นี้ใช้ควบคุมว่าใครเห็นพื้นที่นี้ในหน้าเช็กอิน
+                  </div>
+                </div>
+
+                <div class="field">
+                  <label>active</label>
+                  <select v-model="editing.active">
+                    <option :value="true">true</option>
+                    <option :value="false">false</option>
+                  </select>
+                </div>
               </div>
             </div>
-
-            <div class="field" style="margin-top: 12px">
-              <label>active</label>
-              <select v-model="editing.active">
-                <option :value="true">true</option>
-                <option :value="false">false</option>
-              </select>
-            </div>
-          </div>
-        </section>
+          </section>
+        </div>
       </div>
     </div>
   </body>

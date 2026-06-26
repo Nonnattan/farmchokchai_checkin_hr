@@ -16,6 +16,11 @@ const { createApp, onMounted, ref } = Vue;
               debug.value = JSON.stringify(payload);
               lastCheckin.value = payload;
               const res = await common.addLog(payload, 30000);
+              
+              if (res && res.ok === false) {
+                throw new Error(res.err || res.error || res.message || "Server ปฏิเสธการบันทึกข้อมูล");
+              }
+
               localStorage.setItem("last_checkin", JSON.stringify({
                 ...payload,
                 savedAt: new Date().toISOString(),

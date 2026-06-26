@@ -1,6 +1,6 @@
 (() => {
   const common = window.CheckinCommon || {};
-  const API_URL = common.API_URL || "https://script.google.com/macros/s/AKfycbyU0MchhC88K1UXTDmzTleaHZITf8-2IVF3UNZmeBnRzkBkyUzEUjzkwI53H9Ttjgnf/exec";
+  const API_URL = common.API_URL || "https://script.google.com/macros/s/AKfycbz59URqJ-enQd6g0YHedQRTLO8IZxJAFfExKpGoRhO3Q2YAKWnouuO-CmCxNuwTQ-pE/exec";
   const DEFAULT_AREA = common.DEFAULT_AREA || {
     areaId: "qr_code",
     areaName: "qr_code",
@@ -261,9 +261,9 @@
         const list = Array.isArray(this.assignableUsers) ? this.assignableUsers : [];
         const filtered = q
           ? list.filter((u) => {
-              const hay = [u.email, u.displayName, u.uid, u.role].join(" ").toLowerCase();
-              return hay.includes(q);
-            })
+            const hay = [u.email, u.displayName, u.uid, u.role].join(" ").toLowerCase();
+            return hay.includes(q);
+          })
           : list;
         return filtered.slice().sort((a, b) => {
           const ea = String(a.email || "").localeCompare(String(b.email || ""));
@@ -380,7 +380,8 @@
         this.loading = true;
         this.setStatus("loading", "กำลังโหลดพื้นที่", "ดึงข้อมูลพื้นที่จาก Google Sheet");
         try {
-          const data = await requestJson("areas", null, "GET", 20000);
+          // Changed Action from "areas" to "location"
+          const data = await requestJson("location", null, "GET", 20000);
           const list = Array.isArray(data?.data) ? data.data.map(normalizeArea) : [];
           this.areas = list.length ? list : [normalizeArea(DEFAULT_AREA)];
 
@@ -450,7 +451,8 @@
         if (!this.selectedId) return;
         this.loading = true;
         try {
-          const data = await requestJson("areas", null, "GET", 20000);
+          // Changed Action from "areas" to "location"
+          const data = await requestJson("location", null, "GET", 20000);
           const list = Array.isArray(data?.data) ? data.data.map(normalizeArea) : [];
           this.areas = list.length ? list : [normalizeArea(DEFAULT_AREA)];
           const found = this.areas.find((a) => a.areaId === this.selectedId);
@@ -488,7 +490,8 @@
             };
           });
 
-          const res = await requestJson("areas", payload, "POST", 30000);
+          // Changed Action from "areas" to "location"
+          const res = await requestJson("location", payload, "POST", 30000);
           const saved = normalizeArea(res?.data?.[0] || payload);
           const savedId = String(saved.areaId || payload.areaId || "").trim();
           this.draftMode = false;
@@ -498,7 +501,8 @@
           await this.loadAssignableUsers();
 
           try {
-            const refreshData = await requestJson("areas", null, "GET", 20000);
+            // Changed Action from "areas" to "location"
+            const refreshData = await requestJson("location", null, "GET", 20000);
             const refreshed = Array.isArray(refreshData?.data) ? refreshData.data.map(normalizeArea) : [];
             if (refreshed.length) {
               this.areas = refreshed;
@@ -530,7 +534,8 @@
 
         this.saving = true;
         try {
-          await requestJson("areas", { actionType: "delete", areaId: id, originalAreaId: this.selectedId }, "POST", 20000);
+          // Changed Action from "areas" to "location"
+          await requestJson("location", { actionType: "delete", areaId: id, originalAreaId: this.selectedId }, "POST", 20000);
           await this.loadAreas();
           this.setStatus("success", "ลบแล้ว", `ลบพื้นที่ ${id} ออกจาก Sheet แล้ว`);
         } catch (err) {
@@ -577,19 +582,19 @@
         const area = normalizeArea(this.editing);
         const boundary = typeof common.buildBoundary === "function"
           ? common.buildBoundary({
-              centerLat: area.lat,
-              centerLng: area.lng,
-              northMeters: area.north,
-              southMeters: area.south,
-              eastMeters: area.east,
-              westMeters: area.west,
-            })
+            centerLat: area.lat,
+            centerLng: area.lng,
+            northMeters: area.north,
+            southMeters: area.south,
+            eastMeters: area.east,
+            westMeters: area.west,
+          })
           : {
-              minLat: area.lat - (area.south / 111320),
-              maxLat: area.lat + (area.north / 111320),
-              minLng: area.lng - (area.west / 111320),
-              maxLng: area.lng + (area.east / 111320),
-            };
+            minLat: area.lat - (area.south / 111320),
+            maxLat: area.lat + (area.north / 111320),
+            minLng: area.lng - (area.west / 111320),
+            maxLng: area.lng + (area.east / 111320),
+          };
 
         if (!this.marker) {
           this.marker = L.marker([area.lat, area.lng], {
