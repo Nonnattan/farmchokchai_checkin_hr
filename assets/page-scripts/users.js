@@ -56,6 +56,10 @@ createApp({
     const statusTitle = ref("กำลังตรวจสอบสิทธิ์");
     const statusDesc = ref("โหลด session และข้อมูลจาก Firestore users");
     const navItems = computed(() => common.getNavItems(session.value?.role || "masteradmin", "users"));
+    const showLogout = computed(() => {
+      const r = String(session.value?.role || "").toLowerCase();
+      return r === "admin" || r === "masteradmin";
+    });
 
     const rightMode = ref("edit");
     const createForm = ref(createEmptyCreateForm());
@@ -385,6 +389,7 @@ createApp({
       syncCurrentUser,
       createNewUser,
       logout,
+      showLogout,
     };
   },
   template: "#users-template",

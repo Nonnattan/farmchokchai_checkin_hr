@@ -279,7 +279,14 @@
   }
 
   async function addLog(entry, timeoutMs = 30000) {
-    return await requestJson("logs", entry || {}, "POST", timeoutMs);
+    // #region agent log
+    fetch('http://127.0.0.1:7651/ingest/5e86c977-c900-466f-905f-8c2e11144e1c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5e6f95'},body:JSON.stringify({sessionId:'5e6f95',location:'common.js:addLog',message:'addLog payload',data:{userId:String(entry?.userId||''),email:String(entry?.email||''),displayName:String(entry?.displayName||entry?.name||'')},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
+    // #endregion
+    const result = await requestJson("logs", entry || {}, "POST", timeoutMs);
+    // #region agent log
+    fetch('http://127.0.0.1:7651/ingest/5e86c977-c900-466f-905f-8c2e11144e1c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5e6f95'},body:JSON.stringify({sessionId:'5e6f95',location:'common.js:addLog:result',message:'addLog response',data:{ok:result?.ok,userId:String(result?.userId||''),displayName:String(result?.displayName||''),err:String(result?.err||result?.error||'')},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
+    // #endregion
+    return result;
   }
 
   // บันทึกชื่อที่ admin ใส่ให้กับคนเช็คอินที่ LINE ไม่ได้ตั้งชื่อมา

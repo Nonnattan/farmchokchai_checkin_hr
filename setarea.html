@@ -7,17 +7,13 @@
 
     <link rel="stylesheet" href="./assets/styles.css" />
     <link rel="icon" href="data:," />
-    <link
-      rel="stylesheet"
-      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
     <script src="./assets/firebase-config.js"></script>
-
     <script src="./assets/common.js"></script>
     <script src="./assets/components/nav-tabs.js"></script>
     <script src="./assets/firebase-auth.js"></script>
@@ -25,41 +21,32 @@
 
     <style>
       :root {
-        --line: #e5e7eb;
+        --line: #e2e8f0;
         --text: #0f172a;
         --muted: #64748b;
-        --bg: #f8fafc;
         --primary: #2563eb;
         --success: #047857;
         --danger: #b91c1c;
-        --warning: #b45309;
       }
 
-      * {
-        box-sizing: border-box;
-      }
+      * { box-sizing: border-box; }
 
       body {
         margin: 0;
-        font-family:
-          system-ui,
-          -apple-system,
-          BlinkMacSystemFont,
-          "Segoe UI",
-          sans-serif;
-        background: linear-gradient(180deg, #f8fafc, #eef2ff);
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
         color: var(--text);
       }
 
       .container {
-        max-width: 1600px;
+        max-width: 1680px;
         margin: 0 auto;
         padding: 20px;
       }
 
       .topbar,
       .card {
-        background: rgba(255, 255, 255, 0.92);
+        background: rgba(255, 255, 255, 0.95);
         border: 1px solid var(--line);
         border-radius: 20px;
         box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
@@ -91,29 +78,8 @@
         font-weight: 800;
       }
 
-      .brand h1 {
-        margin: 0;
-        font-size: 24px;
-        line-height: 1.15;
-      }
-
-      .brand p {
-        margin: 4px 0 0;
-        color: var(--muted);
-      }
-
-      .layout {
-        display: grid;
-        grid-template-columns: 0.95fr 1.05fr;
-        gap: 20px;
-      }
-
-      .stack {
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-        padding: 18px;
-      }
+      .brand h1 { margin: 0; font-size: 24px; }
+      .brand p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
 
       .status-bar {
         display: flex;
@@ -126,33 +92,12 @@
         border: 1px solid var(--line);
       }
 
-      .status-bar.success {
-        background: #ecfdf3;
-        border-color: #a7f3d0;
-      }
+      .status-bar.success { background: #ecfdf3; border-color: #a7f3d0; }
+      .status-bar.loading { background: #eff6ff; border-color: #bfdbfe; }
+      .status-bar.error { background: #fef2f2; border-color: #fecaca; }
 
-      .status-bar.loading {
-        background: #eff6ff;
-        border-color: #bfdbfe;
-      }
-
-      .status-bar.error {
-        background: #fef2f2;
-        border-color: #fecaca;
-      }
-
-      .status-title {
-        margin: 0;
-        font-weight: 700;
-        color: #0f172a;
-      }
-
-      .status-sub {
-        margin: 4px 0 0;
-        font-size: 13px;
-        color: #475569;
-        line-height: 1.5;
-      }
+      .status-title { margin: 0; font-weight: 700; }
+      .status-sub { margin: 4px 0 0; font-size: 13px; color: #475569; line-height: 1.5; }
 
       .spinner {
         width: 16px;
@@ -161,22 +106,42 @@
         border-top-color: #2563eb;
         border-radius: 50%;
         animation: spin 0.8s linear infinite;
-        flex: none;
       }
 
-      .actions {
+      .workspace {
+        display: grid;
+        grid-template-columns: 340px 1fr;
+        gap: 18px;
+        align-items: start;
+      }
+
+      .sidebar {
         display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
+        flex-direction: column;
+        gap: 14px;
+        padding: 16px;
+        position: sticky;
+        top: 16px;
+        max-height: calc(100vh - 32px);
+      }
+
+      .mode-badge {
+        display: inline-flex;
         align-items: center;
-        justify-content: space-between;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        font-size: 13px;
+        font-weight: 800;
       }
 
-      .actions-left,
-      .actions-right {
+      .mode-badge.create { background: #ecfdf3; color: #047857; }
+      .mode-badge.edit { background: #fff7ed; color: #c2410c; }
+
+      .toolbar {
         display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
+        flex-direction: column;
+        gap: 8px;
       }
 
       .btn {
@@ -184,149 +149,98 @@
         border: 1px solid var(--line);
         background: #fff;
         color: var(--text);
-        border-radius: 14px;
-        padding: 11px 14px;
+        border-radius: 12px;
+        padding: 10px 14px;
         font-weight: 700;
         cursor: pointer;
-        transition: 0.2s ease;
-      }
-
-      .btn:hover {
-        transform: translateY(-1px);
-      }
-
-      .btn.primary {
-        background: var(--primary);
-        color: #fff;
-        border-color: var(--primary);
-      }
-
-      .btn.ghost {
-        background: #fff;
-      }
-
-      .btn.danger {
-        background: #fef2f2;
-        color: var(--danger);
-        border-color: #fecaca;
-      }
-
-      .btn:disabled {
-        opacity: 0.55;
-        cursor: not-allowed;
-        transform: none;
-      }
-
-      .helper-box {
-        padding: 14px 16px;
-        border-radius: 16px;
-        background: #f8fafc;
-        border: 1px solid var(--line);
-        font-size: 13px;
-        color: #475569;
-        line-height: 1.6;
-      }
-
-      .row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        align-items: center;
-      }
-
-      .pill-sm {
-        display: inline-flex;
-        align-items: center;
-        padding: 6px 10px;
-        border-radius: 999px;
-        font-size: 12px;
-        font-weight: 800;
-        background: #eff6ff;
-        color: #1d4ed8;
-      }
-
-      .pill-sm.good {
-        background: #ecfdf3;
-        color: #047857;
-      }
-
-      .pill-sm.bad {
-        background: #fef2f2;
-        color: #b91c1c;
-      }
-
-      .pill-sm.warning {
-        background: #fffbeb;
-        color: #92400e;
-      }
-
-      .section-head {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 12px;
-      }
-
-      .section-head h2 {
-        margin: 0;
-        font-size: 20px;
-      }
-
-      .small {
-        font-size: 13px;
-        color: var(--muted);
-      }
-
-      .table-wrap {
-        overflow: auto;
-        border: 1px solid var(--line);
-        border-radius: 18px;
-        background: #fff;
-      }
-
-      .table {
-        width: 100%;
-        border-collapse: collapse;
-        min-width: 920px;
-      }
-
-      .table th,
-      .table td {
-        padding: 12px 10px;
-        border-bottom: 1px solid var(--line);
-        text-align: left;
-        vertical-align: top;
-      }
-
-      .table th {
-        font-size: 13px;
-        color: #475467;
-        background: #fafbff;
-        position: sticky;
-        top: 0;
-        z-index: 1;
-      }
-
-      .table td {
+        transition: 0.15s ease;
+        text-align: center;
+        text-decoration: none;
         font-size: 14px;
       }
 
-      .click-row {
+      .btn:hover { transform: translateY(-1px); }
+      .btn.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+      .btn.success { background: #059669; color: #fff; border-color: #059669; }
+      .btn.ghost { background: #fff; }
+      .btn.danger { background: #fef2f2; color: var(--danger); border-color: #fecaca; }
+      .btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+
+      .btn-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      .search-input {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 10px 12px;
+        font: inherit;
+        outline: none;
+      }
+
+      .search-input:focus {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+      }
+
+      .area-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        overflow: auto;
+        flex: 1;
+        min-height: 200px;
+        max-height: 520px;
+        padding-right: 4px;
+      }
+
+      .area-card {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 12px;
+        background: #fff;
         cursor: pointer;
+        transition: 0.15s ease;
       }
 
-      .click-row:hover {
-        background: #f8fafc;
-      }
-
-      .click-row.active {
+      .area-card:hover { border-color: #cbd5e1; background: #f8fafc; }
+      .area-card.active {
+        border-color: #3b82f6;
         background: #eff6ff;
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.12);
+      }
+
+      .area-card b { display: block; font-size: 14px; }
+      .area-card .meta { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.45; }
+
+      .pill-sm {
+        display: inline-flex;
+        padding: 4px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 800;
+      }
+
+      .pill-sm.good { background: #ecfdf3; color: #047857; }
+      .pill-sm.bad { background: #fef2f2; color: #b91c1c; }
+
+      .main-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .map-card {
+        padding: 16px;
       }
 
       .map-shell {
         position: relative;
         border: 1px solid var(--line);
-        border-radius: 20px;
+        border-radius: 18px;
         overflow: hidden;
         background: #fff;
       }
@@ -340,56 +254,30 @@
         display: flex;
         justify-content: space-between;
         gap: 12px;
-        align-items: center;
         pointer-events: none;
       }
 
       .map-label {
         background: rgba(255, 255, 255, 0.94);
         border: 1px solid #dbeafe;
-        border-radius: 14px;
+        border-radius: 12px;
         padding: 10px 12px;
-        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
-        backdrop-filter: blur(8px);
         font-size: 13px;
         line-height: 1.5;
+        backdrop-filter: blur(8px);
       }
 
-      .map-wrap {
-        height: 530px;
-      }
-
-      .map {
-        width: 100%;
-        height: 100%;
-      }
-
-      .selected-card {
-        padding: 14px 16px;
-        border-radius: 16px;
-        background: #fff7ed;
-        border: 1px solid #fed7aa;
-        font-size: 13px;
-        color: #9a3412;
-        line-height: 1.6;
-      }
-
-      .form-card {
-        padding: 16px;
-        background: #fafbff;
-        border: 1px solid var(--line);
-        border-radius: 18px;
-      }
+      .map-wrap { height: 420px; }
+      .map { width: 100%; height: 100%; }
 
       .form-grid {
         display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 12px;
       }
 
-      .span-2 {
-        grid-column: 1 / -1;
-      }
+      .span-2 { grid-column: span 2; }
+      .span-3 { grid-column: 1 / -1; }
 
       .field {
         display: flex;
@@ -408,8 +296,8 @@
       .field select {
         width: 100%;
         border: 1px solid var(--line);
-        border-radius: 14px;
-        padding: 11px 12px;
+        border-radius: 12px;
+        padding: 10px 12px;
         font: inherit;
         outline: none;
         background: #fff;
@@ -419,200 +307,77 @@
       .field textarea:focus,
       .field select:focus {
         border-color: var(--primary);
-        box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
       }
 
-      .field textarea {
-        min-height: 90px;
-        resize: vertical;
+      .field textarea { min-height: 80px; resize: vertical; }
+
+      .section-title {
+        margin: 0 0 12px;
+        font-size: 18px;
       }
 
-      .assign-help,
       .hint {
         font-size: 13px;
-        color: #64748b;
-        line-height: 1.6;
+        color: var(--muted);
+        line-height: 1.55;
       }
 
-      .assign-toolbar {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-top: 10px;
-      }
-
-      .searchbar {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-        align-items: center;
-      }
-
-      .searchbar input {
-        width: min(360px, 100%);
-      }
-
-      .assign-list {
+      .assign-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
         gap: 10px;
-        margin-top: 10px;
+        margin-top: 12px;
       }
 
       .assign-item {
         display: flex;
         align-items: flex-start;
-        gap: 12px;
-        padding: 14px;
+        gap: 10px;
+        padding: 12px;
         border: 1px solid var(--line);
-        border-radius: 14px;
-        background: #ffffff; /* พื้นหลังเริ่มต้นเป็นสีขาวเสมอ */
-        transition: all 0.2s ease;
+        border-radius: 12px;
+        background: #fff;
         cursor: pointer;
-        position: relative;
+        transition: 0.15s ease;
       }
 
-      .assign-item:hover {
-        border-color: #cbd5e1;
-        background: #f8fafc;
-      }
-
+      .assign-item:hover { border-color: #cbd5e1; background: #f8fafc; }
       .assign-item.selected {
-        background: #eff6ff !important;
-        border-color: #3b82f6 !important;
-        box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.1);
+        background: #eff6ff;
+        border-color: #3b82f6;
+        box-shadow: 0 4px 10px rgba(37, 99, 235, 0.1);
       }
 
-      .assign-item input {
-        margin-top: 4px;
-        transform: scale(1.05);
-      }
-
-      .assign-item .meta {
-        font-size: 12px;
-        color: var(--muted);
-        line-height: 1.45;
-      }
+      .assign-item input { margin-top: 3px; accent-color: #2563eb; }
+      .assign-item .meta { font-size: 12px; color: var(--muted); }
 
       .assign-empty {
         padding: 14px;
         border: 1px dashed #cbd5e1;
-        border-radius: 16px;
+        border-radius: 12px;
         background: #f8fafc;
         color: var(--muted);
         font-size: 13px;
       }
 
-      .assign-meta {
-        margin-top: 8px;
-        font-size: 12px;
-        color: var(--muted);
-      }
+      .stack { padding: 16px; }
 
-      .assign-container {
-        background: #ffffff;
-        border: 1px solid var(--line);
-        border-radius: 18px;
-        padding: 16px;
-        margin-top: 10px;
-      }
-
-      .assign-list {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-        gap: 12px;
-        margin-top: 16px;
-      }
-
-      .assign-item {
-        display: flex;
-        align-items: flex-start;
-        gap: 12px;
-        padding: 14px;
-        border: 1px solid var(--line); /* เส้นขอบปกติ */
-        border-radius: 14px;
-        background: #ffffff; /* พื้นหลังปกติ */
-        transition: all 0.2s ease;
-        cursor: pointer;
-      }
-
-      .assign-item:hover {
-        border-color: #cbd5e1;
-        background: #f8fafc;
-      }
-
-      .assign-item.selected {
-        background: #eff6ff !important; /* สีน้ำเงินจาง */
-        border-color: #3b82f6 !important; /* เส้นขอบสีน้ำเงิน */
-        box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.1);
-      }
-
-      .assign-item input[type="checkbox"] {
-        margin-top: 3px;
-        width: 18px;
-        height: 18px;
-        accent-color: #2563eb;
-      }
-
-      .user-info b {
-        display: block;
-        color: #1e293b;
-        font-size: 14px;
-      }
-
-      .user-info .meta {
-        font-size: 12px;
-        color: #64748b;
-        margin-top: 2px;
-      }
-
-      @keyframes spin {
-        to {
-          transform: rotate(360deg);
-        }
-      }
+      @keyframes spin { to { transform: rotate(360deg); } }
 
       @media (max-width: 1100px) {
-        .layout {
-          grid-template-columns: 1fr;
-        }
-
-        .form-grid {
-          grid-template-columns: 1fr;
-        }
-
-        .span-2 {
-          grid-column: auto;
-        }
-
-        .map-wrap {
-          height: 380px;
-        }
+        .workspace { grid-template-columns: 1fr; }
+        .sidebar { position: static; max-height: none; }
+        .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .map-wrap { height: 340px; }
       }
 
       @media (max-width: 760px) {
-        .container {
-          padding: 12px;
-        }
-
-        .topbar {
-          flex-direction: column;
-          align-items: flex-start;
-        }
-
-        .actions {
-          flex-direction: column;
-          align-items: stretch;
-        }
-
-        .actions-left,
-        .actions-right {
-          width: 100%;
-        }
-
-        .searchbar input {
-          width: 100%;
-        }
+        .container { padding: 12px; }
+        .topbar { flex-direction: column; align-items: flex-start; }
+        .form-grid { grid-template-columns: 1fr; }
+        .span-2, .span-3 { grid-column: auto; }
+        .btn-row { grid-template-columns: 1fr; }
       }
     </style>
   </head>
@@ -625,360 +390,223 @@
             <div class="brand-badge">SA</div>
             <div>
               <h1>SetArea</h1>
-              <p>
-                ตั้งค่าพื้นที่เช็กอินด้วยแผนที่ • กำหนด role ที่มองเห็นพื้นที่ •
-                เลือก admin/masteradmin จาก Firestore users
-              </p>
+              <p>เพิ่มพื้นที่ใหม่ทีละรายการ • assign admin • ลบ/แก้ไขได้</p>
             </div>
           </div>
-
-          <app-tabs :items="navItems"></app-tabs>
+          <app-tabs :items="navItems" :show-logout="showLogout" @logout="logout"></app-tabs>
         </header>
 
-        <div class="layout">
-          <section class="card stack">
-            <div class="status-bar" :class="statusClass">
-              <div>
-                <p class="status-title">{{ statusTitle }}</p>
-                <p class="status-sub">{{ statusDesc }}</p>
-              </div>
-              <div v-if="loading || saving" class="spinner"></div>
-            </div>
+        <div class="status-bar" :class="statusClass" style="margin-bottom:16px">
+          <div>
+            <p class="status-title">{{ statusTitle }}</p>
+            <p class="status-sub">{{ statusDesc }}</p>
+          </div>
+          <div v-if="loading || saving" class="spinner"></div>
+        </div>
 
-            <div class="actions">
-              <div class="actions-left">
-                <button class="btn" @click="newArea">กลับพื้นที่</button>
+        <div class="workspace">
+          <!-- Sidebar: รายการพื้นที่ -->
+          <aside class="card sidebar">
+            <span class="mode-badge" :class="modeClass">{{ modeLabel }}</span>
+
+            <div class="toolbar">
+              <button class="btn primary" type="button" @click="newArea">+ เพิ่มพื้นที่ใหม่</button>
+              <div class="btn-row">
                 <button
-                  class="btn ghost"
-                  @click="restoreSelected"
-                  :disabled="loading"
+                  class="btn"
+                  :class="isCreating ? 'success' : 'primary'"
+                  type="button"
+                  @click="save"
+                  :disabled="saving"
                 >
-                  รีโหลดพื้นที่ที่เลือก
-                </button>
-                <button class="btn ghost" @click="save" :disabled="saving">
-                  {{ saving ? 'กำลังบันทึก...' : 'บันทึก' }}
+                  {{ saveButtonLabel }}
                 </button>
                 <button
                   class="btn danger"
+                  type="button"
                   @click="removeArea"
-                  :disabled="saving"
+                  :disabled="saving || !canDelete"
+                  :title="canDelete ? 'ลบพื้นที่ที่เลือก' : 'เลือกพื้นที่ที่มี qr_code ก่อน'"
                 >
-                  ลบพื้นที่
+                  ลบ
                 </button>
               </div>
-            </div>
-
-            <div class="helper-box">
-              <div class="row">
-                <span class="pill-sm good">Areas: {{ totalAreas }}</span>
-                <span class="pill-sm warning">Role: masteradmin</span>
-                <span class="pill-sm bad">Sheet: location</span>
-              </div>
-              <div style="margin-top: 8px">
-                คลิกชื่อพื้นที่ในตารางเพื่อย้าย marker ไปตำแหน่งนั้น หรือลาก
-                marker / คลิกบนแผนที่เพื่อปรับศูนย์กลางใหม่
-              </div>
-            </div>
-
-            <div class="section-head">
-              <div>
-                <h2>Assign Users</h2>
-                <div class="small">
-                  เลือกผู้ใช้จาก Firestore users ที่จะผูกกับพื้นที่นี้
-                </div>
-              </div>
-            </div>
-
-            <div class="field">
-              <label>ค้นหาอีเมลหรือชื่อเพื่อกรองรายชื่อ</label>
-              <input
-                v-model="assignSearch"
-                placeholder="ค้นหาอีเมลหรือชื่อเพื่อกรองรายชื่อ"
-              />
-              <div class="assign-toolbar">
-                <button
-                  class="btn ghost"
-                  type="button"
-                  @click="selectAllAssignableUsers"
-                >
-                  เลือกทั้งหมด
-                </button>
-                <button class="btn ghost" type="button" @click="clearAssignees">
-                  ล้างทั้งหมด
-                </button>
-                <button
-                  class="btn ghost"
-                  type="button"
-                  @click="loadAssignableUsers"
-                >
-                  รีเฟรชรายชื่อ
-                </button>
-              </div>
-            </div>
-
-            <div v-if="filteredAssignableUsers.length" class="assign-list">
-              <label
-                v-for="u in filteredAssignableUsers"
-                :key="u.uid || u.email"
-                :class="['assign-item', { selected: isAssigneeSelected(u.email) }]"
-              >
-                <input
-                  type="checkbox"
-                  :checked="isAssigneeSelected(u.email)"
-                  @change="toggleAssignee(u.email, $event.target.checked)"
-                />
-                <div>
-                  <div><b>{{ u.email }}</b></div>
-                  <div class="meta">
-                    {{ u.displayName || u.uid || '-' }} • {{ u.role }}
-                  </div>
-                </div>
-              </label>
-            </div>
-
-            <div v-else class="assign-empty">
-              ไม่พบรายชื่อ admin/masteradmin จาก Firestore users
-            </div>
-
-            <div class="assign-meta">
-              เลือกแล้ว {{ selectedAssigneeEmails.length }} คน
-            </div>
-            <div class="assign-help">
-              ระบบจะบันทึกเป็น many-to-many ลงชีต AreaAssignments
-              และเก็บรายการรวมไว้ที่คอลัมน์ email ของชีตพื้นที่
-            </div>
-
-            <div>
-              <div class="section-head">
-                <div>
-                  <h2>ตารางพื้นที่</h2>
-                  <div class="small">
-                    ใช้แถวนี้เพื่อเลือกพื้นที่ที่ต้องการแก้ไข
-                  </div>
-                </div>
-              </div>
-
-              <div class="table-wrap" style="margin-top: 12px">
-                <table class="table">
-                  <thead>
-                    <tr>
-                      <th>พื้นที่</th>
-                      <th>พิกัด</th>
-                      <th>ขอบเขต</th>
-                      <th>Assign</th>
-                      <th>Email</th>
-                      <th>สถานะ</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr
-                      v-for="area in areas"
-                      :key="area.areaId"
-                      class="click-row"
-                      :class="{ active: area.areaId === selectedId }"
-                      @click="pickArea(area)"
-                    >
-                      <td>
-                        <b>{{ area.areaName }}</b><br />
-                        <span class="small">{{ area.areaId }}</span><br />
-                        <span class="small">{{ area.remark || '-' }}</span>
-                      </td>
-                      <td class="small">
-                        Lat {{ formatNumber(area.lat) }}<br />
-                        Lng {{ formatNumber(area.lng) }}
-                      </td>
-                      <td class="small">
-                        N/S/E/W<br />
-                        {{ area.north }}/{{ area.south }}/{{ area.east }}/{{
-                        area.west }}
-                      </td>
-                      <td class="small">{{ area.assign || '-' }}</td>
-                      <td class="small">{{ area.email || '-' }}</td>
-                      <td>
-                        <span
-                          class="pill-sm"
-                          :class="area.active === false ? 'bad' : 'good'"
-                        >
-                          {{ area.active === false ? 'inactive' : 'active' }}
-                        </span>
-                      </td>
-                      <td>
-                        <a
-                          v-if="!String(area.areaId || '').startsWith('__legacy-no-id-')"
-                          class="btn ghost"
-                          style="white-space:nowrap"
-                          :href="'./qr_code.html?areaId=' + encodeURIComponent(area.areaId)"
-                          target="_blank"
-                          @click.stop
-                        >
-                          ดู QR
-                        </a>
-                        <span
-                          v-else
-                          class="btn ghost"
-                          style="opacity:.5;cursor:not-allowed;white-space:nowrap"
-                          title="พื้นที่นี้ยังไม่มีรหัส qr_code กรุณากดบันทึกอีกครั้งเพื่อสร้างรหัส"
-                          @click.stop.prevent
-                        >
-                          ดู QR
-                        </span>
-                      </td>
-                    </tr>
-                    <tr v-if="!areas.length">
-                      <td
-                        colspan="7"
-                        class="small"
-                        style="padding: 20px; text-align: center"
-                      >
-                        ไม่พบข้อมูลพื้นที่
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </section>
-
-          <section class="card stack">
-            <div class="section-head">
-              <div>
-                <h2>Map Preview</h2>
-                <div class="small">
-                  พื้นที่ที่เลือกจะมี marker และกรอบสี่เหลี่ยมแสดงทันที
-                </div>
-              </div>
-            </div>
-
-            <div class="map-shell">
-              <div class="map-hint">
-                <div class="map-label">
-                  <b>{{ editing.areaName }}</b><br />
-                  {{ editing.areaId }}
-                </div>
-                <div class="row">
-                  <span class="pill-sm good">Draggable marker</span>
-                  <span class="pill-sm warning">Boundary frame</span>
-                </div>
-              </div>
-              <div class="map-wrap">
-                <div ref="mapEl" class="map"></div>
-              </div>
-            </div>
-
-            <div class="selected-card" v-if="selectedId">
-              <b>พื้นที่ที่เลือก</b><br />
-              ID: {{ editing.areaId }}<br />
-              Name: {{ editing.areaName }}<br />
-              Lat/Lng: {{ formatNumber(editing.lat) }}, {{
-              formatNumber(editing.lng) }}<br />
-              <a
-                v-if="!draftMode && !String(editing.areaId || '').startsWith('__legacy-no-id-')"
+              <button
                 class="btn ghost"
-                style="margin-top:8px;display:inline-block"
-                :href="'./qr_code.html?areaId=' + encodeURIComponent(editing.areaId)"
-                target="_blank"
+                type="button"
+                @click="restoreSelected"
+                :disabled="loading || isCreating"
               >
-                ดู QR ของพื้นที่นี้
-              </a>
-            </div>
-            <div class="helper-box" v-else>
-              เลือกพื้นที่จากตารางด้านซ้าย หรือกด
-              <b>+ เพิ่มพื้นที่</b> เพื่อสร้างรายการใหม่
+                รีโหลดที่เลือก
+              </button>
             </div>
 
-            <div class="form-card">
-              <h3 style="margin: 0 0 10px">แก้ไขพื้นที่ที่เลือก</h3>
+            <div class="hint">
+              พื้นที่ทั้งหมด <b>{{ totalAreas }}</b> รายการ<br />
+              admin จะเห็นเฉพาะพื้นที่ที่ masteradmin assign ให้
+            </div>
 
+            <input
+              v-model="areaSearch"
+              class="search-input"
+              placeholder="ค้นหาพื้นที่..."
+            />
+
+            <div class="area-list">
+              <div
+                v-for="area in filteredAreas"
+                :key="area.areaId"
+                class="area-card"
+                :class="{ active: area.areaId === selectedId && !isCreating }"
+                @click="pickArea(area)"
+              >
+                <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+                  <b>{{ area.areaName || area.areaId }}</b>
+                  <span class="pill-sm" :class="area.active === false ? 'bad' : 'good'">
+                    {{ area.active === false ? 'off' : 'on' }}
+                  </span>
+                </div>
+                <div class="meta">{{ area.areaId }}</div>
+                <div class="meta" v-if="area.email">Admin: {{ area.email }}</div>
+                <div class="meta" v-if="area.remark">{{ area.remark }}</div>
+              </div>
+              <div v-if="!filteredAreas.length" class="assign-empty">
+                {{ areaSearch ? 'ไม่พบพื้นที่ที่ค้นหา' : 'ยังไม่มีพื้นที่ — กด + เพิ่มพื้นที่ใหม่' }}
+              </div>
+            </div>
+          </aside>
+
+          <!-- Main: แผนที่ + ฟอร์ม -->
+          <div class="main-panel">
+            <section class="card map-card">
+              <div class="map-shell">
+                <div class="map-hint">
+                  <div class="map-label">
+                    <b>{{ editing.areaName || 'พื้นที่ใหม่' }}</b><br />
+                    {{ editing.areaId || 'รหัสจะถูกสร้างตอนบันทึก' }}
+                  </div>
+                  <span class="pill-sm good">ลาก marker / คลิกแผนที่</span>
+                </div>
+                <div class="map-wrap">
+                  <div ref="mapEl" class="map"></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="card stack">
+              <h2 class="section-title">ข้อมูลพื้นที่</h2>
               <div class="form-grid">
                 <div class="field">
-                  <label>qr_code / areaId</label>
+                  <label>areaName *</label>
+                  <input v-model="editing.areaName" placeholder="ชื่อพื้นที่" />
+                </div>
+                <div class="field">
+                  <label>qr_code</label>
                   <input
                     v-model="editing.areaId"
-                    placeholder="เว้นว่างไว้ได้ ระบบจะสร้างรหัสให้อัตโนมัติ"
-                    :disabled="!draftMode"
-                    :title="!draftMode ? 'แก้ไขรหัสของพื้นที่ที่มีอยู่แล้วไม่ได้ เพื่อป้องกันข้อมูลสับสน หากต้องการเปลี่ยนรหัส ให้กด + เพิ่มพื้นที่ เพื่อสร้างใหม่' : ''"
+                    placeholder="สร้างอัตโนมัติตอนบันทึก"
+                    :disabled="!isCreating"
                   />
-                  <div class="assign-help" v-if="draftMode">
-                    เว้นว่างไว้ได้ ระบบจะสร้างรหัสไม่ซ้ำให้อัตโนมัติตอนกดบันทึก
-                  </div>
-                  <div class="assign-help" v-else>
-                    รหัสนี้ถูกล็อกไว้เพื่อป้องกันบันทึกทับผิดพื้นที่ กด "+ เพิ่มพื้นที่" หากต้องการสร้างรายการใหม่
-                  </div>
                 </div>
-
                 <div class="field">
-                  <label>areaName</label>
-                  <input v-model="editing.areaName" placeholder="qr_code" />
+                  <label>active</label>
+                  <select v-model="editing.active">
+                    <option :value="true">active</option>
+                    <option :value="false">inactive</option>
+                  </select>
                 </div>
 
                 <div class="field">
                   <label>lat</label>
-                  <input
-                    v-model.number="editing.lat"
-                    type="number"
-                    step="0.000001"
-                  />
+                  <input v-model.number="editing.lat" type="number" step="0.000001" />
                 </div>
-
                 <div class="field">
                   <label>lng</label>
-                  <input
-                    v-model.number="editing.lng"
-                    type="number"
-                    step="0.000001"
-                  />
+                  <input v-model.number="editing.lng" type="number" step="0.000001" />
+                </div>
+                <div class="field">
+                  <label>assign (role)</label>
+                  <input v-model="editing.assign" placeholder="masteradmin,admin" />
                 </div>
 
                 <div class="field">
-                  <label>north</label>
+                  <label>north (m)</label>
                   <input v-model.number="editing.north" type="number" min="0" />
                 </div>
-
                 <div class="field">
-                  <label>south</label>
+                  <label>south (m)</label>
                   <input v-model.number="editing.south" type="number" min="0" />
                 </div>
-
                 <div class="field">
-                  <label>east</label>
+                  <label>east (m)</label>
                   <input v-model.number="editing.east" type="number" min="0" />
                 </div>
-
                 <div class="field">
-                  <label>west</label>
+                  <label>west (m)</label>
                   <input v-model.number="editing.west" type="number" min="0" />
                 </div>
 
-                <div class="field span-2">
+                <div class="field span-3">
                   <label>remark</label>
-                  <textarea
-                    v-model="editing.remark"
-                    placeholder="รายละเอียดพื้นที่"
-                  ></textarea>
-                </div>
-
-                <div class="field">
-                  <label>assign (role)</label>
-                  <input
-                    v-model="editing.assign"
-                    placeholder="masteradmin,admin"
-                  />
-                  <div class="assign-help">
-                    role นี้ใช้ควบคุมว่าใครเห็นพื้นที่นี้ในหน้าเช็กอิน
-                  </div>
-                </div>
-
-                <div class="field">
-                  <label>active</label>
-                  <select v-model="editing.active">
-                    <option :value="true">true</option>
-                    <option :value="false">false</option>
-                  </select>
+                  <textarea v-model="editing.remark" placeholder="รายละเอียดพื้นที่"></textarea>
                 </div>
               </div>
-            </div>
-          </section>
+
+              <div style="margin-top:20px">
+                <h2 class="section-title">Assign Admin</h2>
+                <p class="hint">
+                  เลือก admin ที่จะเห็นพื้นที่นี้ในหน้า Admin Dashboard (masteradmin เห็นทุกพื้นที่)
+                </p>
+
+                <input
+                  v-model="assignSearch"
+                  class="search-input"
+                  placeholder="ค้นหาอีเมล admin..."
+                  style="margin-top:10px"
+                />
+
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+                  <button class="btn ghost" type="button" @click="selectAllAssignableUsers">เลือกทั้งหมด</button>
+                  <button class="btn ghost" type="button" @click="clearAssignees">ล้าง</button>
+                  <button class="btn ghost" type="button" @click="loadAssignableUsers">รีเฟรช</button>
+                  <span class="hint" style="align-self:center">เลือกแล้ว {{ selectedAssigneeEmails.length }} คน</span>
+                </div>
+
+                <div v-if="filteredAssignableUsers.length" class="assign-grid">
+                  <label
+                    v-for="u in filteredAssignableUsers"
+                    :key="u.uid || u.email"
+                    class="assign-item"
+                    :class="{ selected: isAssigneeSelected(u.email) }"
+                  >
+                    <input
+                      type="checkbox"
+                      :checked="isAssigneeSelected(u.email)"
+                      @change="toggleAssignee(u.email, $event.target.checked)"
+                    />
+                    <div>
+                      <b>{{ u.email }}</b>
+                      <div class="meta">{{ u.displayName || u.uid || '-' }}</div>
+                    </div>
+                  </label>
+                </div>
+                <div v-else class="assign-empty" style="margin-top:12px">
+                  ไม่พบ admin ใน Firestore users — สร้าง admin ในหน้า Users ก่อน
+                </div>
+              </div>
+
+              <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
+                <a
+                  v-if="!isCreating && !String(editing.areaId || '').startsWith('__legacy-no-id-')"
+                  class="btn ghost"
+                  :href="'./qr_code.html?areaId=' + encodeURIComponent(editing.areaId)"
+                  target="_blank"
+                >
+                  ดู QR ของพื้นที่นี้
+                </a>
+              </div>
+            </section>
+          </div>
         </div>
       </div>
     </div>

@@ -15,6 +15,15 @@ createApp({
 
     const selectedArea = computed(() => areas.value.find((a) => a.areaId === selectedId.value) || areas.value[0] || common.DEFAULT_AREA);
     const navItems = computed(() => common.getNavItems(session.value?.role, "qr_code"));
+    const showLogout = computed(() => {
+      const r = String(session.value?.role || "").toLowerCase();
+      return r === "admin" || r === "masteradmin";
+    });
+
+    async function logout() {
+      await FirebaseRole.signOut();
+      location.replace("./index.html");
+    }
 
     function nav(role) {
       const r = String(role || "user").toLowerCase();
@@ -138,6 +147,8 @@ createApp({
       loading,
       buildQR,
       reloadAreas,
+      logout,
+      showLogout,
       nav,
       common,
     };
@@ -152,7 +163,7 @@ createApp({
             <p>สร้าง QR ให้พาไปหน้า user check-in ตามพื้นที่ที่เลือก</p>
           </div>
         </div>
-        <app-tabs :items="navItems" />
+        <app-tabs :items="navItems" :show-logout="showLogout" @logout="logout" />
       </div>
 
       <div class="qr-layout">

@@ -9,16 +9,28 @@
         type: Array,
         default: () => [],
       },
+      showLogout: {
+        type: Boolean,
+        default: false,
+      },
     },
-    methods: {},
+    emits: ["logout"],
     template: `
-      <div class="nav">
-        <a
-          v-for="item in items"
-          :key="item.key || item.href || item.label"
-          :href="item.href"
-          :class="{ active: !!item.active }"
-        >{{ item.label }}</a>
+      <div class="nav-toolbar">
+        <div class="nav">
+          <a
+            v-for="item in items"
+            :key="item.key || item.href || item.label"
+            :href="item.href"
+            :class="{ active: !!item.active }"
+          >{{ item.label }}</a>
+        </div>
+        <button
+          v-if="showLogout"
+          type="button"
+          class="nav-logout-btn"
+          @click="$emit('logout')"
+        >ออกจากระบบ</button>
       </div>
     `,
   };

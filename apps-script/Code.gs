@@ -115,6 +115,17 @@ const USER_HEADERS = [
   "updatedBy",
 ];
 
+// ชีต user สำหรับคนเช็คอินผ่าน LINE (แยกจาก Firestore users ของ admin)
+// userId = LINE userId ถาวร | name = ชื่อจาก LINE ตอนลงทะเบียนครั้งแรก | currentName = ชื่อที่ admin ตั้ง/แก้ไข
+const LINE_CHECKIN_USER_SHEET = "user";
+const LINE_CHECKIN_USER_HEADERS = [
+  "userId",
+  "name",
+  "currentName",
+  "email",
+  "updatedAt",
+];
+
 const DEFAULT_AREA = {
   areaId: "qr_code",
   areaName: "qr_code",
@@ -370,7 +381,7 @@ function saveLocation(payload) {
 }
 
 function deleteLocation(payload) {
-  const targetId = String(payload.qr_code || payload.areaId).trim();
+  const targetId = String(payload.qr_code || payload.areaId || payload.originalAreaId || "").trim();
   if (!targetId) throw new Error("ไม่พบ qr_code ที่ต้องการลบ");
 
   const sheet = getSheetByNameOrCreate("location");
@@ -586,6 +597,190 @@ function deleteUser(payload) {
 
 /**
  * =======================================================================
+ * LINE CHECK-IN USER REGISTRY (ชีต user)
+ * =======================================================================
+ */
+
+function ensureLineCheckinUserSheet() {
+  const sheet = getSheetByNameOrCreate(LINE_CHECKIN_USER_SHEET);
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow === 0) {
+    sheet.appendRow(LINE_CHECKIN_USER_HEADERS);
+    return sheet;
+  }
+
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet
+    .getRange(1, 1, 1, Math.max(lastCol, 1))
+    .getValues()[0]
+    .map(function (h) {
+      return String(h || "").trim();
+    });
+  const existing = new Set(headers.filter(Boolean));
+  const missing = LINE_CHECKIN_USER_HEADERS.filter(function (h) {
+    return !existing.has(h);
+  });
+
+  if (missing.length > 0) {
+    sheet.getRange(1, headers.length + 1, 1, missing.length).setValues([missing]);
+  }
+
+  return sheet;
+}
+
+function findLineCheckinUserRowIndex(sheet, userId) {
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return -1;
+
+  const headers = data[0].map(function (h) {
+    return String(h || "").trim();
+  });
+  const userIdColIdx = headers.indexOf("userId");
+  if (userIdColIdx === -1) return -1;
+
+  const target = String(userId || "").trim();
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][userIdColIdx] || "").trim() === target) {
+      return i + 1;
+    }
+  }
+  return -1;
+}
+
+function getLineCheckinUserByUserId(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) return null;
+
+  ensureLineCheckinUserSheet();
+  const list = getSheetDataAsObjects(LINE_CHECKIN_USER_SHEET);
+  return (
+    list.find(function (u) {
+      return String(u.userId || "").trim() === uid;
+    }) || null
+  );
+}
+
+function ensureLineCheckinUser(payload) {
+  ensureLineCheckinUserSheet();
+
+  const userId = String(payload.userId || "").trim();
+  if (!userId) return null;
+
+  const sheet = getSheetByNameOrCreate(LINE_CHECKIN_USER_SHEET);
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0].map(function (h) {
+    return String(h || "").trim();
+  });
+  const now = new Date().toISOString();
+  const lineName = String(payload.displayName || payload.name || "").trim();
+  const email = String(payload.email || "").trim().toLowerCase();
+  const rowIndex = findLineCheckinUserRowIndex(sheet, userId);
+
+  if (rowIndex > 0) {
+    const row = sheet.getRange(rowIndex, 1, 1, headers.length).getValues()[0];
+    const nameCol = headers.indexOf("name");
+    const emailCol = headers.indexOf("email");
+    const updatedCol = headers.indexOf("updatedAt");
+
+    if (emailCol > -1 && email && !String(row[emailCol] || "").trim()) {
+      row[emailCol] = email;
+    }
+    if (nameCol > -1 && lineName && !String(row[nameCol] || "").trim()) {
+      row[nameCol] = lineName;
+    }
+    if (updatedCol > -1) row[updatedCol] = now;
+
+    sheet.getRange(rowIndex, 1, 1, headers.length).setValues([row]);
+
+    const obj = {};
+    for (let j = 0; j < headers.length; j++) {
+      obj[headers[j]] = row[j];
+    }
+    return obj;
+  }
+
+  const rowData = headers.map(function (h) {
+    if (h === "userId") return userId;
+    if (h === "name") return lineName;
+    if (h === "currentName") return "";
+    if (h === "email") return email;
+    if (h === "updatedAt") return now;
+    return "";
+  });
+  sheet.appendRow(rowData);
+
+  const saved = {};
+  for (let k = 0; k < headers.length; k++) {
+    saved[headers[k]] = rowData[k];
+  }
+  return saved;
+}
+
+function updateLineCheckinUserCurrentName(userId, currentName, email) {
+  ensureLineCheckinUserSheet();
+
+  const uid = String(userId || "").trim();
+  const nextName = String(currentName || "").trim();
+  if (!uid || !nextName) return false;
+
+  const sheet = getSheetByNameOrCreate(LINE_CHECKIN_USER_SHEET);
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0].map(function (h) {
+    return String(h || "").trim();
+  });
+  const now = new Date().toISOString();
+  let rowIndex = findLineCheckinUserRowIndex(sheet, uid);
+
+  if (rowIndex === -1) {
+    const rowData = headers.map(function (h) {
+      if (h === "userId") return uid;
+      if (h === "name") return nextName;
+      if (h === "currentName") return nextName;
+      if (h === "email") return String(email || "").trim().toLowerCase();
+      if (h === "updatedAt") return now;
+      return "";
+    });
+    sheet.appendRow(rowData);
+    return true;
+  }
+
+  const row = sheet.getRange(rowIndex, 1, 1, headers.length).getValues()[0];
+  const nameCol = headers.indexOf("name");
+  const currentCol = headers.indexOf("currentName");
+  const emailCol = headers.indexOf("email");
+  const updatedCol = headers.indexOf("updatedAt");
+
+  if (currentCol > -1) row[currentCol] = nextName;
+  if (nameCol > -1 && !String(row[nameCol] || "").trim()) row[nameCol] = nextName;
+  if (emailCol > -1 && email && !String(row[emailCol] || "").trim()) {
+    row[emailCol] = String(email).trim().toLowerCase();
+  }
+  if (updatedCol > -1) row[updatedCol] = now;
+
+  sheet.getRange(rowIndex, 1, 1, headers.length).setValues([row]);
+  return true;
+}
+
+function resolveLogDisplayName(payload, lineUser) {
+  const fromCurrent =
+    lineUser && String(lineUser.currentName || "").trim();
+  if (fromCurrent) return fromCurrent;
+
+  const fromLineName = lineUser && String(lineUser.name || "").trim();
+  if (fromLineName) return fromLineName;
+
+  return String(payload.displayName || payload.name || "").trim();
+}
+
+function logRowMatchesUser(rowUserId, rowEmail, targetUserId, targetEmail) {
+  if (targetUserId && rowUserId && rowUserId === targetUserId) return true;
+  if (targetEmail && rowEmail && rowEmail === targetEmail) return true;
+  return false;
+}
+
+/**
+ * =======================================================================
  * LOGS MODULE
  * =======================================================================
  */
@@ -738,27 +933,38 @@ function saveLog(payload) {
   }
   // -------------------------------------------
 
+  const lineUser =
+    ensureLineCheckinUser(payload) ||
+    getLineCheckinUserByUserId(payload.userId);
+  const resolvedDisplayName = resolveLogDisplayName(payload, lineUser);
+  const resolvedUserId = String(payload.userId || "").trim();
+
   const sheet = ensureLogsSheetSchema();
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
 
   const rowData = headers.map(function (h) {
     if (h === "createdAt") return payload.time || new Date().toISOString();
-    if (h === "displayName") return payload.displayName || payload.name || "";
+    if (h === "displayName") return resolvedDisplayName;
     if (h === "email") return payload.email || "";
     if (h === "site") return payload.site || "";
     if (h === "session") return payload.session || "";
     if (h === "lat") return payload.lat || "";
     if (h === "lng") return payload.lng || "";
     if (h === "accuracy") return payload.accuracy || "";
-    if (h === "userId") return payload.userId || "";
+    if (h === "userId") return resolvedUserId;
     if (h === "pictureUrl") return payload.pictureUrl || "";
     if (h === "status") return payload.status || "checked_in";
     return payload[h] || "";
   });
 
   sheet.appendRow(rowData);
-  return { ok: true, message: "Log saved successfully" };
+  return {
+    ok: true,
+    message: "Log saved successfully",
+    userId: resolvedUserId,
+    displayName: resolvedDisplayName,
+  };
 }
 
 /**
@@ -796,19 +1002,28 @@ function handleSaveLogName(payload) {
     return { ok: false, err: "กรุณาระบุชื่อที่ต้องการบันทึก" };
   }
 
+  if (targetUserId) {
+    updateLineCheckinUserCurrentName(targetUserId, newDisplayName, targetEmail);
+  }
+
   let updatedCount = 0;
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
     const rowUserId = userIdColIdx !== -1 ? String(row[userIdColIdx] || "").trim() : "";
     const rowEmail = emailColIdx !== -1 ? String(row[emailColIdx] || "").trim().toLowerCase() : "";
 
-    // จับคู่ด้วย userId ก่อนเสมอถ้ามีทั้งสองฝั่ง ถ้าแถวไม่มี userId เลยจึง fallback ไป email
-    const isMatch = targetUserId && rowUserId
-      ? rowUserId === targetUserId
-      : (targetEmail && rowEmail && rowEmail === targetEmail);
+    const isMatch = logRowMatchesUser(
+      rowUserId,
+      rowEmail,
+      targetUserId,
+      targetEmail,
+    );
 
     if (isMatch) {
       row[displayNameColIdx] = newDisplayName;
+      if (targetUserId && userIdColIdx !== -1 && !rowUserId) {
+        row[userIdColIdx] = targetUserId;
+      }
       sheet.getRange(i + 1, 1, 1, headers.length).setValues([row]);
       updatedCount++;
     }
@@ -818,5 +1033,11 @@ function handleSaveLogName(payload) {
     return { ok: false, err: "ไม่พบรายการ Log ที่ตรงกันเพื่ออัปเดตชื่อ" };
   }
 
-  return { ok: true, message: `อัปเดตชื่อ ${updatedCount} รายการสำเร็จ`, updatedCount: updatedCount };
+  return {
+    ok: true,
+    message: "อัปเดตชื่อ " + updatedCount + " รายการสำเร็จ",
+    updatedCount: updatedCount,
+    userId: targetUserId,
+    displayName: newDisplayName,
+  };
 }

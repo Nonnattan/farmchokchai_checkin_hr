@@ -26,6 +26,10 @@ createApp({
     );
 
     const navItems = computed(() => common.getNavItems(session.value?.role, "admin"));
+    const showLogout = computed(() => {
+      const r = String(session.value?.role || "").toLowerCase();
+      return r === "admin" || r === "masteradmin";
+    });
 
     function setStatus(type, title, desc) {
       statusType.value = type;
@@ -145,7 +149,7 @@ createApp({
         const raw = await common.getAreas();
         const visible = common.getVisibleAreas(raw, info.role, info.user.uid, info.user.email);
 
-        areas.value = visible.length ? visible : raw;
+        areas.value = visible;
         selectedId.value = areas.value[0]?.areaId || "";
 
         setStatus("success", "โหลดข้อมูลเรียบร้อย", `พบพื้นที่ ${areas.value.length} รายการ`);
@@ -225,6 +229,7 @@ createApp({
       focusArea,
       renderTableFocus,
       logout,
+      showLogout,
       nav,
       common,
     };
@@ -240,7 +245,7 @@ createApp({
             <p>ตารางพื้นที่ + แผนที่ + ปุ่มไปหน้า QR Code</p>
           </div>
         </div>
-        <app-tabs :items="navItems" />
+        <app-tabs :items="navItems" :show-logout="showLogout" @logout="logout" />
       </div>
 
       <div class="admin-grid">

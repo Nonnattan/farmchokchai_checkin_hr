@@ -86,9 +86,6 @@
     const areaNameText = String(areaNameSource || "").trim();
     const remarkText = String(remarkSource || "").trim();
 
-    // สำคัญ: ถ้าแถวข้อมูลจริงจาก Sheet ไม่มี qr_code/areaId เลย ห้าม fallback เป็นค่าคงที่เดียวกันทุกแถว
-    // (เดิมใช้ DEFAULT_AREA.areaId = "qr_code" ซ้ำหมดทุกแถว ทำให้ระบบมองว่าทุกแถวคือพื้นที่เดียวกัน
-    // และบันทึกทับกันไปเรื่อยๆ) ให้สร้างรหัสชั่วคราวที่ไม่ซ้ำกันต่อแถวแทน
     const areaId = areaIdText || (allowBlankAreaId ? "" : `__legacy-no-id-${Date.now()}-${__legacyIdCounter++}`);
     const areaName = areaNameText || (allowBlankAreaId ? "" : DEFAULT_AREA.areaName);
 
@@ -225,23 +222,24 @@
 
   const app = Vue.createApp({
     data() {
-      const initial = normalizeArea(DEFAULT_AREA);
+      const initial = normalizeArea(DEFAULT_AREA, { allowBlankAreaId: true });
       return {
         common,
         navItems: [],
         areas: [],
-        selectedId: initial.areaId,
+        selectedId: "",
         editing: { ...initial },
         assignableUsers: [],
         selectedAssigneeEmails: [],
-        draftMode: false,
+        draftMode: true,
         assignSearch: "",
+        areaSearch: "",
         loading: false,
         loadingUsers: false,
         saving: false,
         statusType: "loading",
         statusTitle: "กำลังโหลดข้อมูล",
-        statusDesc: "กำลังดึงพื้นที่และรายชื่อผู้ใช้จาก Google Sheet / Firestore",
+        statusDesc: "กำลังดึงพื้นที่และรายชื่อ admin จาก Google Sheet / Firestore",
         map: null,
         marker: null,
         rectangle: null,
@@ -255,11 +253,35 @@
       statusClass() {
         return this.statusType;
       },
-      selectedArea() {
-        return this.areas.find((a) => a.areaId === this.selectedId) || this.areas[0] || null;
+      isCreating() {
+        return this.draftMode || !String(this.selectedId || "").trim();
       },
-      selectedEmailText() {
-        return this.selectedAssigneeEmails.join(", ");
+      modeLabel() {
+        return this.isCreating ? "สร้างพื้นที่ใหม่" : "แก้ไขพื้นที่";
+      },
+      modeClass() {
+        return this.isCreating ? "create" : "edit";
+      },
+      saveButtonLabel() {
+        return this.saving
+          ? "กำลังบันทึก..."
+          : (this.isCreating ? "บันทึกพื้นที่ใหม่" : "อัปเดตพื้นที่");
+      },
+      canDelete() {
+        const id = String(this.editing.areaId || this.selectedId || "").trim();
+        return !this.isCreating && id && !id.startsWith("__legacy-no-id-");
+      },
+      selectedArea() {
+        return this.areas.find((a) => a.areaId === this.selectedId) || null;
+      },
+      filteredAreas() {
+        const q = this.areaSearch.trim().toLowerCase();
+        const list = Array.isArray(this.areas) ? this.areas : [];
+        if (!q) return list;
+        return list.filter((a) => {
+          const hay = [a.areaId, a.areaName, a.remark, a.email, a.assign].join(" ").toLowerCase();
+          return hay.includes(q);
+        });
       },
       filteredAssignableUsers() {
         const q = this.assignSearch.trim().toLowerCase();
@@ -270,14 +292,11 @@
             return hay.includes(q);
           })
           : list;
-        return filtered.slice().sort((a, b) => {
-          const ea = String(a.email || "").localeCompare(String(b.email || ""));
-          if (ea !== 0) return ea;
-          return String(a.role || "").localeCompare(String(b.role || ""));
-        });
+        return filtered.slice().sort((a, b) => String(a.email).localeCompare(String(b.email)));
       },
-      selectedAssignCount() {
-        return this.selectedAssigneeEmails.length;
+      showLogout() {
+        const r = String(this.session?.role || "").toLowerCase();
+        return r === "admin" || r === "masteradmin";
       },
     },
     watch: {
@@ -307,16 +326,24 @@
         : [];
       this.initMap();
       this.loadSession()
-        .then((session) => {
+        .then(async (session) => {
           if (!session) return null;
           this.session = session;
-          return Promise.all([this.loadAreas(), this.loadAssignableUsers()]);
+          await Promise.all([
+            this.loadAreas(null, { skipAutoSelect: true }),
+            this.loadAssignableUsers(),
+          ]);
+          this.newArea();
         })
         .finally(() => {
           this.$nextTick(() => this.syncOverlay(true));
         });
     },
     methods: {
+      async logout() {
+        await FirebaseRole.signOut();
+        location.replace("./index.html");
+      },
       toNum,
       formatNumber,
       setStatus(type, title, desc) {
@@ -381,38 +408,28 @@
           this.syncOverlay(focus);
         });
       },
-      async loadAreas(selectId = null) {
+      async loadAreas(selectId = null, options = {}) {
+        const skipAutoSelect = Boolean(options?.skipAutoSelect);
         this.loading = true;
         this.setStatus("loading", "กำลังโหลดพื้นที่", "ดึงข้อมูลพื้นที่จาก Google Sheet");
         try {
-          // Changed Action from "areas" to "location"
           const data = await requestJson("location", null, "GET", 20000);
           const list = Array.isArray(data?.data) ? data.data.map(normalizeArea) : [];
-          this.areas = list.length ? list : [normalizeArea(DEFAULT_AREA)];
+          this.areas = list;
 
-          // ถ้ามีการส่ง selectId มา ให้ใช้ค่านั้น มิฉะนั้นใช้ selectedId ปัจจุบัน
-          const idToSelect = selectId || this.selectedId;
-          
-          // ค้นหาพื้นที่ที่ตรงกับ ID ที่ต้องการ
-          const found = this.areas.find((a) => a.areaId === idToSelect);
-          
-          // ถ้าพบพื้นที่ที่ตรงกับ ID ให้ใช้พื้นที่นั้น
-          if (found) {
-            this.applyArea(found, false);
-          } else if (this.areas.length > 0) {
-            // ถ้าไม่พบแต่มีพื้นที่อื่นอยู่ ให้ใช้พื้นที่แรก
-            this.applyArea(this.areas[0], false);
-          } else {
-            // ถ้าไม่มีพื้นที่เลย ให้ใช้ค่า default
-            this.applyArea(normalizeArea(DEFAULT_AREA), false);
+          const idToSelect = selectId || (skipAutoSelect ? "" : this.selectedId);
+          if (idToSelect) {
+            const found = this.areas.find((a) => a.areaId === idToSelect);
+            if (found) {
+              this.applyArea(found, false);
+            }
           }
 
           this.setStatus("success", "โหลดพื้นที่แล้ว", `พบพื้นที่ ${this.areas.length} รายการ`);
         } catch (err) {
           console.error(err);
-          this.areas = [normalizeArea(DEFAULT_AREA)];
-          this.applyArea(this.areas[0], false);
-          this.setStatus("error", "โหลดไม่สำเร็จ", err?.message || "ใช้ค่าเริ่มต้นแทน");
+          this.areas = [];
+          this.setStatus("error", "โหลดไม่สำเร็จ", err?.message || "ไม่พบข้อมูลพื้นที่");
         } finally {
           this.loading = false;
           this.$nextTick(() => this.syncOverlay(true));
@@ -430,7 +447,7 @@
               role: String(u.role || "user").trim().toLowerCase(),
               active: u.active !== false,
             }))
-            .filter((u) => u.email && ["admin", "masteradmin"].includes(u.role));
+            .filter((u) => u.email && u.role === "admin");
           this.assignableUsers = list.sort((a, b) => String(a.email).localeCompare(String(b.email)));
         } catch (err) {
           console.error(err);
@@ -446,9 +463,16 @@
         this.selectedAssigneeEmails = [];
       },
       newArea() {
-        const seed = this.selectedArea || this.areas[0] || normalizeArea(DEFAULT_AREA);
+        const seed = this.areas[0] || normalizeArea(DEFAULT_AREA);
         const fresh = {
-          ...seed,
+          lat: seed.lat,
+          lng: seed.lng,
+          north: seed.north,
+          south: seed.south,
+          east: seed.east,
+          west: seed.west,
+          assign: seed.assign || DEFAULT_AREA.assign,
+          active: true,
           areaId: "",
           areaName: "",
           remark: "",
@@ -463,16 +487,18 @@
         this.editing.areaName = "";
         this.editing.remark = "";
         this.selectedAssigneeEmails = [];
-        this.setStatus("success", "สร้างพื้นที่ใหม่", "เริ่มจากพื้นที่เปล่า พร้อมแผนที่ตำแหน่งเดิม");
+        this.setStatus("success", "โหมดสร้างใหม่", "กรอกข้อมูลแล้วกดบันทึกพื้นที่ใหม่ — จะเพิ่มแถวใหม่ใน Sheet ไม่ทับของเดิม");
       },
       async restoreSelected() {
-        if (!this.selectedId) return;
+        if (!this.selectedId || this.isCreating) {
+          this.setStatus("error", "ยังไม่ได้เลือกพื้นที่", "เลือกพื้นที่จากรายการด้านซ้ายก่อน");
+          return;
+        }
         this.loading = true;
         try {
-          // Changed Action from "areas" to "location"
           const data = await requestJson("location", null, "GET", 20000);
           const list = Array.isArray(data?.data) ? data.data.map(normalizeArea) : [];
-          this.areas = list.length ? list : [normalizeArea(DEFAULT_AREA)];
+          this.areas = list;
           const found = this.areas.find((a) => a.areaId === this.selectedId);
           if (found) {
             this.draftMode = false;
@@ -487,24 +513,31 @@
         }
       },
       async save() {
+        if (!String(this.editing.areaName || "").trim() && !String(this.editing.remark || "").trim()) {
+          this.setStatus("error", "กรอกชื่อพื้นที่", "กรุณาระบุ areaName หรือ remark ก่อนบันทึก");
+          return;
+        }
+
         this.saving = true;
-        this.setStatus("loading", "กำลังบันทึก", "ส่งข้อมูลพื้นที่ + รายชื่อที่ assign ไปยัง Google Sheet");
+        const creating = this.isCreating;
+        this.setStatus(
+          "loading",
+          creating ? "กำลังเพิ่มพื้นที่ใหม่" : "กำลังอัปเดตพื้นที่",
+          creating
+            ? "จะเพิ่มแถวใหม่ใน Google Sheet ไม่แก้ไขแถวเดิม"
+            : "อัปเดตข้อมูลพื้นที่ที่เลือกอยู่",
+        );
         try {
           const payload = toPayloadArea(this.editing);
           const selectedEmails = uniqueEmails(this.selectedAssigneeEmails);
-          const isCreating = this.draftMode || !String(this.selectedId || "").trim();
 
-          payload.originalAreaId = isCreating ? "" : String(this.selectedId || "").trim();
+          payload.originalAreaId = creating ? "" : String(this.selectedId || "").trim();
 
-          if (isCreating) {
-            // สำคัญ: ตอนสร้างพื้นที่ใหม่ ห้ามใช้ areaId ที่อาจค้างอยู่ในฟอร์ม (เช่นกรอกเอง หรือมาจาก area อื่นที่เคยเลือกไว้)
-            // เพราะถ้า id นั้นไปตรงกับแถวเดิมในชีต จะเขียนทับข้อมูลเก่าทันที
-            // ให้สร้างรหัสใหม่ที่ไม่ซ้ำกับของเดิมเสมอ แล้วปล่อยให้ Apps Script เป็นผู้ยืนยันความไม่ซ้ำอีกชั้นหนึ่ง
+          if (creating) {
             const existingIds = new Set(this.areas.map((a) => String(a.areaId || "").trim()).filter(Boolean));
             let candidate = String(payload.areaId || "").trim();
             if (!candidate || existingIds.has(candidate)) {
               candidate = buildAreaId(this.editing);
-              // กันชนซ้ำกรณีเกิด timestamp เดียวกันเป๊ะ (โอกาสน้อยมาก แต่ป้องกันไว้)
               while (existingIds.has(candidate)) {
                 candidate = buildAreaId(this.editing) + "-" + Math.random().toString(36).slice(2, 5);
               }
@@ -521,39 +554,34 @@
             return {
               email,
               uid: found?.uid || "",
-              role: found?.role || "",
+              role: found?.role || "admin",
               displayName: found?.displayName || "",
               active: found?.active !== false,
             };
           });
 
-          // Changed Action from "areas" to "location"
           const res = await requestJson("location", payload, "POST", 30000);
           const saved = normalizeArea(res?.data?.[0] || payload);
           const savedId = String(saved.areaId || payload.areaId || "").trim();
-          this.draftMode = false;
-          this.selectedId = savedId;
-          this.areas = upsertArea(this.areas, saved);
-          this.applyArea(saved, true);
+
+          await this.loadAreas(savedId);
           await this.loadAssignableUsers();
 
-          try {
-            // Changed Action from "areas" to "location"
-            const refreshData = await requestJson("location", null, "GET", 20000);
-            const refreshed = Array.isArray(refreshData?.data) ? refreshData.data.map(normalizeArea) : [];
-            if (refreshed.length) {
-              this.areas = refreshed;
-              const found = refreshed.find((a) => String(a.areaId || "").trim() === savedId) || saved;
-              this.applyArea(found, true);
-            }
-          } catch (refreshErr) {
-            console.warn("refresh after save skipped:", refreshErr);
-          }
+          this.setStatus(
+            "success",
+            creating ? "เพิ่มพื้นที่สำเร็จ" : "อัปเดตสำเร็จ",
+            creating
+              ? `เพิ่มพื้นที่ ${savedId} แล้ว — admin ที่เลือกจะเห็นพื้นที่นี้ในหน้า Admin`
+              : `อัปเดตพื้นที่ ${savedId} แล้ว`,
+          );
 
-          this.setStatus("success", "บันทึกสำเร็จ", `พื้นที่ ${savedId} ถูกเขียนลง Sheet แล้ว (รหัส qr_code: ${savedId})`);
-          
-          // เคลียร์ฟอร์มเพื่อให้เพิ่มพื้นที่ใหม่ต่อได้เลย
-          this.newArea();
+          if (creating) {
+            this.newArea();
+          } else {
+            this.draftMode = false;
+            this.selectedId = savedId;
+            this.applyArea(saved, true);
+          }
         } catch (err) {
           console.error(err);
           this.setStatus(
@@ -561,7 +589,7 @@
             "บันทึกไม่สำเร็จ",
             /permission|permission denied|requested document/i.test(String(err?.message || ""))
               ? "Google Sheet หรือ Web App ยังไม่มีสิทธิ์เข้าถึง ช่วยตรวจสอบการแชร์ Spreadsheet และการ Deploy Apps Script"
-              : (err?.message || "เกิดข้อผิดพลาด")
+              : (err?.message || "เกิดข้อผิดพลาด"),
           );
         } finally {
           this.saving = false;
@@ -569,14 +597,23 @@
       },
       async removeArea() {
         const id = String(this.editing.areaId || this.selectedId || "").trim();
-        if (!id) return;
-        if (!confirm(`ต้องการลบพื้นที่ "${id}" ใช่ไหม`)) return;
+        if (!id || this.isCreating) return;
+        if (id.startsWith("__legacy-no-id-")) {
+          this.setStatus("error", "ลบไม่ได้", "พื้นที่นี้ยังไม่มี qr_code ในชีต — กดบันทึกก่อนเพื่อสร้างรหัส");
+          return;
+        }
+        if (!confirm(`ต้องการลบพื้นที่ "${this.editing.areaName || id}" ใช่ไหม?\n\nการลบจะลบจากชีต location และ AreaAssignments`)) return;
 
         this.saving = true;
         try {
-          // Changed Action from "areas" to "location"
-          await requestJson("location", { actionType: "delete", areaId: id, originalAreaId: this.selectedId }, "POST", 20000);
-          await this.loadAreas();
+          await requestJson(
+            "location",
+            { actionType: "delete", areaId: id, qr_code: id, originalAreaId: this.selectedId },
+            "POST",
+            20000,
+          );
+          await this.loadAreas(null, { skipAutoSelect: true });
+          this.newArea();
           this.setStatus("success", "ลบแล้ว", `ลบพื้นที่ ${id} ออกจาก Sheet แล้ว`);
         } catch (err) {
           console.error(err);
@@ -592,7 +629,7 @@
 
         this.map = L.map(el, { zoomControl: true }).setView(
           [this.editing.lat, this.editing.lng],
-          17
+          17,
         );
 
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -619,7 +656,7 @@
       syncOverlay(focus = false) {
         if (!this.map) return;
 
-        const area = normalizeArea(this.editing);
+        const area = normalizeArea(this.editing, { allowBlankAreaId: true });
         const boundary = typeof common.buildBoundary === "function"
           ? common.buildBoundary({
             centerLat: area.lat,
@@ -652,7 +689,7 @@
 
         const bounds = L.latLngBounds(
           [boundary.minLat, boundary.minLng],
-          [boundary.maxLat, boundary.maxLng]
+          [boundary.maxLat, boundary.maxLng],
         );
 
         if (!this.rectangle) {

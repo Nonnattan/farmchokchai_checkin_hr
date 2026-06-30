@@ -237,7 +237,7 @@
               <p>Firestore collection <b>users</b> • doc id = <b>uid</b> ของ Firebase Auth</p>
             </div>
           </div>
-          <app-tabs :items="navItems" />
+          <app-tabs :items="navItems" :show-logout="showLogout" @logout="logout" />
         </div>
 
         <div class="layout">

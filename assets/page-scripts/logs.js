@@ -20,6 +20,24 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
           const sentinel = ref(null);
           const session = ref(null);
 
+          function logRowKey(log) {
+            const uid = String(log?.userId || "").trim();
+            if (uid) return "uid:" + uid + ":" + (log.createdAt || log.time || "");
+            const mail = String(log?.email || "").trim().toLowerCase();
+            if (mail) return "email:" + mail + ":" + (log.createdAt || log.time || "");
+            return log.id || String(log.createdAt || log.time || "") + ":anon";
+          }
+
+          const showLogout = computed(() => {
+            const r = String(session.value?.role || "").toLowerCase();
+            return r === "admin" || r === "masteradmin";
+          });
+
+          async function logout() {
+            await FirebaseRole.signOut();
+            window.location.replace("./index.html");
+          }
+
           const nameFilter = ref("");
           const nameSearch = ref("");
           const nameDropdownOpen = ref(false);
@@ -229,12 +247,10 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
               } else if (rows.length) {
                 // แก้ไขการเช็คข้อมูลซ้ำ: ใช้ id หรือใช้วันเวลา+อีเมลเป็นคีย์หลักกรณีที่ API ไม่คืน id กลับมา
                 const seen = new Set(
-                  logs.value.map(
-                    (item) => item.id || item.createdAt + item.email,
-                  ),
+                  logs.value.map((item) => logRowKey(item)),
                 );
                 rows.forEach((row) => {
-                  let uniqueKey = row.id || row.createdAt + row.email;
+                  const uniqueKey = logRowKey(row);
                   if (!seen.has(uniqueKey)) {
                     logs.value.push(row);
                     seen.add(uniqueKey);
@@ -434,7 +450,7 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
           const savingName = ref(false);
 
           function startEditName(log) {
-            editingLogId.value = log.id || (log.createdAt + log.email);
+            editingLogId.value = logRowKey(log);
             editingName.value = log.displayName || log.name || "";
           }
 
@@ -449,8 +465,17 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
               return;
             }
 
+            if (!String(log.userId || "").trim() && !String(log.email || "").trim()) {
+              error.value = "ไม่พบ userId ของ LINE ในรายการนี้ — ให้คนนี้เช็กอินใหม่อีกครั้งเพื่อบันทึก userId";
+              return;
+            }
+
             savingName.value = true;
             error.value = "";
+
+            // #region agent log
+            fetch('http://127.0.0.1:7651/ingest/5e86c977-c900-466f-905f-8c2e11144e1c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5e6f95'},body:JSON.stringify({sessionId:'5e6f95',location:'logs.js:saveName:before',message:'saveName request',data:{userId:String(log.userId||''),email:String(log.email||''),newName:editingName.value.trim()},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
+            // #endregion
 
             try {
               const result = await common.saveLogName({
@@ -459,8 +484,11 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
                 displayName: editingName.value.trim(),
               }, 15000);
 
+              // #region agent log
+              fetch('http://127.0.0.1:7651/ingest/5e86c977-c900-466f-905f-8c2e11144e1c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5e6f95'},body:JSON.stringify({sessionId:'5e6f95',location:'logs.js:saveName:after',message:'saveName response',data:{ok:result?.ok,updatedCount:result?.updatedCount,err:String(result?.err||result?.error||result?.message||'')},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
+              // #endregion
+
               if (result && result.ok) {
-                // อัปเดตชื่อให้ทุก log ของคนนี้ในตารางที่แสดงอยู่ตอนนี้ทันที (ไม่ต้องรอโหลดใหม่)
                 const matchUserId = String(log.userId || "").trim();
                 const matchEmail = String(log.email || "").trim().toLowerCase();
                 logs.value.forEach((item) => {
@@ -471,6 +499,7 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
                     : (matchEmail && itemEmail && itemEmail === matchEmail);
                   if (sameUser) {
                     item.displayName = editingName.value.trim();
+                    if (matchUserId && !itemUserId) item.userId = matchUserId;
                   }
                 });
                 editingLogId.value = null;
@@ -507,6 +536,7 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
             loadMore,
             loading,
             loadingMore,
+            logRowKey,
             logs,
             nameDropdownOpen,
             nameDropdownRef,
@@ -528,6 +558,8 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
             common,
             formatDisplayTime,
             navItems,
+            showLogout,
+            logout,
           };
         },
         template: `
@@ -540,7 +572,7 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
                 <p class="page-subtitle">เริ่มแสดงข้อมูล "วันนี้" เป็นค่าเริ่มต้น กดรีเฟรชเมื่ออยากอัปเดต และโหลดเพิ่มแบบทีละ 15 รายการ</p>
               </div>
             </div>
-            <app-tabs :items="navItems" />
+            <app-tabs :items="navItems" :show-logout="showLogout" @logout="logout" />
           </div>
 
           <div class="grid">
@@ -666,7 +698,7 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="(log, idx) in filteredLogs" :key="log.id || (log.createdAt + log.email) || idx">
+                    <tr v-for="(log, idx) in filteredLogs" :key="logRowKey(log) || idx">
                       <td>{{ formatDisplayTime(log.createdAt || log.time) }}</td>
                       <td>
                         <strong v-if="log.displayName">{{ log.displayName }}</strong>
@@ -685,7 +717,7 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
                         <span class="pill success">{{ log.status || 'checked_in' }}</span>
                       </td>
                       <td>
-                        <div v-if="editingLogId === (log.id || (log.createdAt + log.email))" class="edit-name-row">
+                        <div v-if="editingLogId === logRowKey(log)" class="edit-name-row">
                           <input v-model="editingName" type="text" placeholder="กรุณาระบุชื่อ" class="edit-name-input" />
                           <button @click="saveName(log)" :disabled="savingName" class="btn-small primary">
                             {{ savingName ? 'กำลัง...' : 'บันทึก' }}
