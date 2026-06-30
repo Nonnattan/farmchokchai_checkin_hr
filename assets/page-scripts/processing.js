@@ -1,5 +1,13 @@
 const { createApp, onMounted, ref } = Vue;
       const common = window.CheckinCommon;
+
+      // ป้องกัน bfcache เด้งกลับมาแสดงสถานะ "กำลังประมวลผล" เดิมที่ค้างอยู่ตอนกดปุ่มย้อนกลับ
+      window.addEventListener("pageshow", (event) => {
+        if (event.persisted) {
+          window.location.reload();
+        }
+      });
+
       createApp({
         setup() {
           const status = ref("กำลังบันทึกข้อมูล...");

@@ -51,6 +51,8 @@
     return next;
   }
 
+  let __legacyIdCounter = 0;
+
   function normalizeArea(raw = {}, options = {}) {
     const allowBlankAreaId = Boolean(options?.allowBlankAreaId);
     const source = raw || {};
@@ -84,7 +86,10 @@
     const areaNameText = String(areaNameSource || "").trim();
     const remarkText = String(remarkSource || "").trim();
 
-    const areaId = areaIdText || (allowBlankAreaId ? "" : DEFAULT_AREA.areaId);
+    // สำคัญ: ถ้าแถวข้อมูลจริงจาก Sheet ไม่มี qr_code/areaId เลย ห้าม fallback เป็นค่าคงที่เดียวกันทุกแถว
+    // (เดิมใช้ DEFAULT_AREA.areaId = "qr_code" ซ้ำหมดทุกแถว ทำให้ระบบมองว่าทุกแถวคือพื้นที่เดียวกัน
+    // และบันทึกทับกันไปเรื่อยๆ) ให้สร้างรหัสชั่วคราวที่ไม่ซ้ำกันต่อแถวแทน
+    const areaId = areaIdText || (allowBlankAreaId ? "" : `__legacy-no-id-${Date.now()}-${__legacyIdCounter++}`);
     const areaName = areaNameText || (allowBlankAreaId ? "" : DEFAULT_AREA.areaName);
 
     return {
@@ -488,8 +493,27 @@
           const payload = toPayloadArea(this.editing);
           const selectedEmails = uniqueEmails(this.selectedAssigneeEmails);
           const isCreating = this.draftMode || !String(this.selectedId || "").trim();
-          payload.originalAreaId = isCreating ? "" : String(this.selectedId || payload.areaId || "").trim();
-          payload.areaId = String(payload.areaId || "").trim() || (isCreating ? buildAreaId(this.editing) : String(this.selectedId || "").trim());
+
+          payload.originalAreaId = isCreating ? "" : String(this.selectedId || "").trim();
+
+          if (isCreating) {
+            // สำคัญ: ตอนสร้างพื้นที่ใหม่ ห้ามใช้ areaId ที่อาจค้างอยู่ในฟอร์ม (เช่นกรอกเอง หรือมาจาก area อื่นที่เคยเลือกไว้)
+            // เพราะถ้า id นั้นไปตรงกับแถวเดิมในชีต จะเขียนทับข้อมูลเก่าทันที
+            // ให้สร้างรหัสใหม่ที่ไม่ซ้ำกับของเดิมเสมอ แล้วปล่อยให้ Apps Script เป็นผู้ยืนยันความไม่ซ้ำอีกชั้นหนึ่ง
+            const existingIds = new Set(this.areas.map((a) => String(a.areaId || "").trim()).filter(Boolean));
+            let candidate = String(payload.areaId || "").trim();
+            if (!candidate || existingIds.has(candidate)) {
+              candidate = buildAreaId(this.editing);
+              // กันชนซ้ำกรณีเกิด timestamp เดียวกันเป๊ะ (โอกาสน้อยมาก แต่ป้องกันไว้)
+              while (existingIds.has(candidate)) {
+                candidate = buildAreaId(this.editing) + "-" + Math.random().toString(36).slice(2, 5);
+              }
+            }
+            payload.areaId = candidate;
+          } else {
+            payload.areaId = String(payload.areaId || "").trim() || String(this.selectedId || "").trim();
+          }
+
           payload.email = selectedEmails.join(",");
           payload.visibleUsers = payload.email;
           payload.assignees = selectedEmails.map((email) => {
@@ -517,21 +541,16 @@
             // Changed Action from "areas" to "location"
             const refreshData = await requestJson("location", null, "GET", 20000);
             const refreshed = Array.isArray(refreshData?.data) ? refreshData.data.map(normalizeArea) : [];
-            console.log("Debug - Refreshed areas count:", refreshed.length);
-            console.log("Debug - Refreshed areas:", refreshed.map(a => ({ areaId: a.areaId, areaName: a.areaName })));
             if (refreshed.length) {
               this.areas = refreshed;
               const found = refreshed.find((a) => String(a.areaId || "").trim() === savedId) || saved;
-              console.log("Debug - Found area after refresh:", found?.areaId);
               this.applyArea(found, true);
-            } else {
-              console.warn("Debug - No areas returned from refresh, keeping current areas");
             }
           } catch (refreshErr) {
             console.warn("refresh after save skipped:", refreshErr);
           }
 
-          this.setStatus("success", "บันทึกสำเร็จ", `พื้นที่ ${savedId} ถูกเขียนลง Sheet แล้ว`);
+          this.setStatus("success", "บันทึกสำเร็จ", `พื้นที่ ${savedId} ถูกเขียนลง Sheet แล้ว (รหัส qr_code: ${savedId})`);
           
           // เคลียร์ฟอร์มเพื่อให้เพิ่มพื้นที่ใหม่ต่อได้เลย
           this.newArea();

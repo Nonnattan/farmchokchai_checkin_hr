@@ -10,6 +10,7 @@
         default: () => [],
       },
     },
+    methods: {},
     template: `
       <div class="nav">
         <a

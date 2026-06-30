@@ -143,7 +143,7 @@ createApp({
         }
 
         const raw = await common.getAreas();
-        const visible = common.getVisibleAreas(raw, info.role, info.user.uid);
+        const visible = common.getVisibleAreas(raw, info.role, info.user.uid, info.user.email);
 
         areas.value = visible.length ? visible : raw;
         selectedId.value = areas.value[0]?.areaId || "";
@@ -241,7 +241,6 @@ createApp({
           </div>
         </div>
         <app-tabs :items="navItems" />
-        <a class="btn ghost" href="#" @click.prevent="logout">Logout</a>
       </div>
 
       <div class="admin-grid">
@@ -314,12 +313,22 @@ createApp({
                   <td>
                     <div class="actions">
                       <a
+                        v-if="!String(a.areaId || '').startsWith('__legacy-no-id-')"
                         class="btn ghost"
                         :href="'./qr_code.html?areaId=' + encodeURIComponent(a.areaId)"
                         @click.stop
                       >
                         ดู QR
                       </a>
+                      <span
+                        v-else
+                        class="btn ghost"
+                        style="opacity:.5;cursor:not-allowed"
+                        title="พื้นที่นี้ยังไม่มีรหัส qr_code กรุณาบันทึกใหม่ในหน้า SetArea ก่อน"
+                        @click.stop.prevent
+                      >
+                        ดู QR
+                      </span>
                       <a
                         v-if="session?.role === 'masteradmin'"
                         class="btn primary"

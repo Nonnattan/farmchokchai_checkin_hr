@@ -1,5 +1,13 @@
 const { createApp, ref, onMounted } = Vue;
       const common = window.CheckinCommon;
+
+      // ป้องกัน bfcache เด้งกลับมาแสดงหน้า "สำเร็จ" เดิมตอนกดปุ่มย้อนกลับ
+      window.addEventListener("pageshow", (event) => {
+        if (event.persisted) {
+          window.location.reload();
+        }
+      });
+
       createApp({
         setup() {
           const status = ref("กำลังโหลดข้อมูล...");

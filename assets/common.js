@@ -3,7 +3,7 @@
   const PENDING_KEY = "pending_checkin_payload";
   const LAST_CHECKIN_KEY = "last_checkin";
   const AREA_CACHE_KEY = "checkin_area_cache";
-  const API_URL = "https://script.google.com/macros/s/AKfycbxYEKgDnqx-Re0a66Yl7sVBHcWxFLQBvkPBP2iKQQyR2NeZu2weEplIhBghR02vO9Py/exec";
+  const API_URL = "https://script.google.com/macros/s/AKfycbxHxMALfPdYVin9CSSU2uubu8Ex2EeqjVfGBMcWeCYq8-0VkvvOwfxZfbtaCIt07Jk3/exec";
   const LIFF_ID = "2008594376-aBuTJTic";
 
   const DEFAULT_AREA = {
@@ -67,18 +67,26 @@
       .filter(Boolean);
   }
 
-  function normalizeArea(raw) {
+  function normalizeArea(raw, fallbackIndex) {
     const source = raw || {};
     // ใช้ qr_code เป็นหลัก แต่รองรับ areaId เพื่อความเข้ากันได้
-    const areaId = String(
-      source.qr_code ||
-      source.areaId ||
-      source.id ||
-      source.code ||
-      source.siteId ||
-      source.site ||
-      "qr_code",
-    ).trim() || "qr_code";
+    // หมายเหตุ: ถ้าแถวข้อมูลไม่มี qr_code/areaId เลย (ข้อมูลเก่าที่ยังไม่เคยมีรหัส)
+    // ห้าม fallback เป็นค่าคงที่ "qr_code" ทุกแถว เพราะจะทำให้หลายพื้นที่ชนกันเป็น id เดียว
+    // ให้ใช้ index ที่ส่งมาสร้างรหัสชั่วคราวที่ไม่ซ้ำกันแทน (เฉพาะตอนแสดงผล ไม่ใช่ตอนบันทึก)
+    const hasRealId = Boolean(
+      String(source.qr_code || source.areaId || source.id || source.code || source.siteId || source.site || "").trim()
+    );
+    const areaId = hasRealId
+      ? String(
+        source.qr_code ||
+        source.areaId ||
+        source.id ||
+        source.code ||
+        source.siteId ||
+        source.site ||
+        "",
+      ).trim()
+      : `__legacy-no-id-${Number.isFinite(fallbackIndex) ? fallbackIndex : Math.random().toString(36).slice(2, 8)}`;
 
     // areaName อาจมากจาก remark, areaName, siteName, หรือ qr_code
     const areaName = String(
@@ -94,7 +102,7 @@
 
     return {
       areaId,
-      qr_code: areaId, // เพิ่ม qr_code เพื่อความสอดคล้อง
+      qr_code: hasRealId ? areaId : "", // ไม่ยัด id ปลอมกลับเข้า qr_code เวลาบันทึกใหม่
       areaName,
       centerLat: toNumberOr(source.centerLat ?? source.lat, DEFAULT_AREA.centerLat),
       centerLng: toNumberOr(source.centerLng ?? source.lng, DEFAULT_AREA.centerLng),
@@ -116,7 +124,7 @@
 
   function normalizeAreaList(payload) {
     const list = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : [];
-    return list.map(normalizeArea);
+    return list.map((item, idx) => normalizeArea(item, idx));
   }
 
   function getAreaCacheKey() {
@@ -186,7 +194,7 @@
     return readJSON(getAreaCacheKey(), []);
   }
 
-  async function getAreas(timeoutMs = 15000) {
+  async function getAreas(timeoutMs = 15000, bypassCache = false) {
     try {
       // Changed Action from "areas" to "location"
       const data = await requestJson("location", null, "GET", timeoutMs);
@@ -194,6 +202,10 @@
       cacheAreas(list);
       return list;
     } catch (e) {
+      // ถ้า bypassCache = true ให้ใช้ default area แทนที่จะใช้ cache เก่า
+      if (bypassCache) {
+        return [normalizeArea(DEFAULT_AREA)];
+      }
       return normalizeAreaList(readCachedAreas());
     }
   }
@@ -202,7 +214,7 @@
     const list = await getAreas(timeoutMs);
     const id = String(areaId || "").trim();
     if (!id) return list[0] || normalizeArea(DEFAULT_AREA);
-    
+
     // พยายามหาพื้นที่ที่ตรงกับ ID ที่ส่งมา (รองรับทั้ง areaId และ qr_code)
     const found = list.find((a) => String(a.areaId).trim() === id || String(a.qr_code).trim() === id);
     return found || list[0] || normalizeArea(DEFAULT_AREA);
@@ -210,10 +222,11 @@
 
   async function saveArea(area, timeoutMs = 20000) {
     const normalized = normalizeArea(area);
+    const isCreatingNew = !String(area?.originalAreaId || area?.previousAreaId || "").trim();
     // Changed Action from "areas" to "location"
     const data = await requestJson("location", {
       ...normalized,
-      originalAreaId: String(area?.originalAreaId || area?.previousAreaId || normalized.areaId || "").trim(),
+      originalAreaId: isCreatingNew ? "" : String(area?.originalAreaId || area?.previousAreaId || "").trim(),
     }, "POST", timeoutMs);
     cacheAreas(normalizeAreaList(data?.data || data?.areas || [normalized]));
     return normalized;
@@ -269,6 +282,12 @@
     return await requestJson("logs", entry || {}, "POST", timeoutMs);
   }
 
+  // บันทึกชื่อที่ admin ใส่ให้กับคนเช็คอินที่ LINE ไม่ได้ตั้งชื่อมา
+  // จับคู่หลักด้วย LINE userId ถ้าไม่มีจึง fallback ไป email — จะอัปเดตให้ทุก log ของคนนั้นที่ตรงกัน
+  async function saveLogName(entry, timeoutMs = 15000) {
+    return await requestJson("saveLogName", entry || {}, "POST", timeoutMs);
+  }
+
   async function getLogs(options = 200, timeoutMs = 15000) {
     const payload = {};
     if (typeof options === "number" || typeof options === "string") {
@@ -310,6 +329,8 @@
     };
   }
 
+  // ⚠️ ตรวจสอบขอบเขตแบบเข้มงวด ไม่มีการอนุโลมระยะทางใดๆ ทั้งสิ้น (ห้ามบวกเพิ่มบัฟเฟอร์ เช่น +5.5 เมตร หรือใช้ accuracy มาขยายขอบเขตเด็ดขาด)
+  // ผู้ใช้ต้องอยู่ในกรอบสี่เหลี่ยมจริงเท่านั้นถึงจะเช็กอินผ่าน ฝั่ง server (Code.gs validateGeofence) ก็ใช้กฎเดียวกันนี้
   function isInsideBoundary(lat, lng, boundary) {
     return lat >= boundary.minLat &&
       lat <= boundary.maxLat &&
@@ -340,15 +361,16 @@
     return `${get("year")}/${get("month")}/${get("day")} ${get("hour")}:${get("minute")}`;
   }
 
-  function getVisibleAreas(areas, role, uid) {
+  function getVisibleAreas(areas, role, uid, email) {
     const r = String(role || "user").toLowerCase();
-    const id = String(uid || "").trim();
+    const id = String(uid || "").trim().toLowerCase();
+    const mail = String(email || "").trim().toLowerCase();
     if (r === "masteradmin") return areas.filter((a) => a.active !== false);
     return (areas || []).filter((a) => {
       if (a.active === false) return false;
       const roles = splitList(a.visibleRoles).map((x) => x.toLowerCase());
-      const users = splitList(a.visibleUsers);
-      return roles.includes("all") || roles.includes(r) || users.includes(id);
+      const users = splitList(a.visibleUsers).map((x) => x.toLowerCase());
+      return roles.includes("all") || roles.includes(r) || users.includes(id) || (mail && users.includes(mail));
     });
   }
 
@@ -425,6 +447,7 @@
       { key: "qr_code", href: "./qr_code.html", label: "QR Code" },
       { key: "admin", href: "./admin.html", label: "Admin" },
       { key: "logs", href: "./logs.html", label: "Logs" },
+
     ];
 
     const masterNav = [
@@ -705,6 +728,7 @@
     getPendingCheckin,
     clearPendingCheckin,
     addLog,
+    saveLogName,
     getLogs,
     getUsers,
     saveUser,

@@ -2,13 +2,7 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
         Vue;
       const common = window.CheckinCommon;
       const PAGE_SIZE = 15;
-      const navItems = ref([
-        { key: "index", href: "./index.html", label: "QR Login" },
-        { key: "user", href: "./user/checkin.html", label: "User" },
-        { key: "admin", href: "./auth.html", label: "Admin" },
-        { key: "setarea", href: "./setarea.html", label: "SetArea" },
-        { key: "logs", href: "./logs.html", label: "Logs", active: true },
-      ]);
+      const navItems = ref([]);
 
       createApp({
         setup() {
@@ -24,6 +18,7 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
           const totalCount = ref(0);
           const hasMore = ref(false);
           const sentinel = ref(null);
+          const session = ref(null);
 
           const nameFilter = ref("");
           const nameSearch = ref("");
@@ -32,6 +27,19 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
 
           let observer = null;
           let requestSeq = 0;
+
+          async function loadSession() {
+            try {
+              const info = await FirebaseRole.requireRole(["admin", "masteradmin"]);
+              if (!info) return; // requireRole จะ redirect ให้เองถ้าไม่ผ่านสิทธิ์
+              session.value = info;
+              // จำกัดการแสดง navItems เฉพาะ admin/masteradmin เท่านั้น
+              navItems.value = common.getNavItems(info.role, "logs");
+            } catch (err) {
+              console.error("Session failed:", err);
+              window.location.href = "./index.html";
+            }
+          }
 
           function getBangkokDateKey(date) {
             const parts = new Intl.DateTimeFormat("en-GB", {
@@ -48,13 +56,8 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
 
           function formatDisplayTime(value) {
             if (!value) return "-";
-            // ป้องกันข้อผิดพลาดกรณีวันที่เป็น ISO string หรือ Date Object
-            if (value instanceof Date) {
-              return value.toLocaleString("en-GB", {
-                timeZone: "Asia/Bangkok",
-              });
-            }
-            return String(value);
+            // ใช้ common.formatDate เพื่อแปลงเป็นเวลาไทย (Asia/Bangkok) เสมอ ไม่ว่าค่าจะมาเป็น ISO string หรือ Date object
+            return common.formatDate(value);
           }
 
           function currentFilterParams() {
@@ -334,17 +337,17 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
 
               const rows = Array.isArray(response?.data) ? response.data : [];
               const header = [
-                "createdAt",
-                "displayName",
-                "email",
-                "site",
-                "session",
-                "lat",
-                "lng",
-                "accuracy",
-                "userId",
-                "pictureUrl",
-                "status",
+                "วันเวลา",
+                "ชื่อ",
+                "อีเมล",
+                "สถานที่",
+                "เซสชัน",
+                "ละติจูด",
+                "ลองจิจูด",
+                "ความถูกต้อง (เมตร)",
+                "รหัสผู้ใช้ LINE",
+                "รูปภาพ",
+                "สถานะ",
               ];
 
               const csvRows = [header.join(",")];
@@ -352,7 +355,7 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
               rows.forEach((row) => {
                 csvRows.push(
                   [
-                    csvEscape(row.createdAt || row.time || ""),
+                    csvEscape(formatDisplayTime(row.createdAt || row.time || "")),
                     csvEscape(row.displayName || row.name || ""),
                     csvEscape(row.email || ""),
                     csvEscape(row.site || ""),
@@ -367,7 +370,8 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
                 );
               });
 
-              const blob = new Blob([csvRows.join("\n")], {
+              // เติม UTF-8 BOM (\ufeff) ไว้หน้าไฟล์ เพื่อให้ Excel เปิดแล้วภาษาไทยไม่เพี้ยน/ไม่เป็นตัวอักษรมั่ว
+              const blob = new Blob(["\ufeff" + csvRows.join("\n")], {
                 type: "text/csv;charset=utf-8;",
               });
               const url = URL.createObjectURL(blob);
@@ -394,7 +398,7 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
 
           function setupObserver() {
             if (observer) observer.disconnect();
-            if (!sentinel.value || !("IntersectionObserver" in window)) return;
+            if (!sentinel.value) return;
 
             observer = new IntersectionObserver(
               (entries) => {
@@ -411,14 +415,13 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
 
           onMounted(async () => {
             document.addEventListener("click", handleDocumentClick);
+            await loadSession();
             activeTab.value = "today";
             fromDate.value = todayKey;
             toDate.value = todayKey;
             await fetchLogs({ reset: true });
             await nextTick();
             setupObserver();
-
-            // หน้า Logs จะโหลดเมื่อเข้าหน้าและเมื่อกดรีเฟรชเท่านั้น
           });
 
           onBeforeUnmount(() => {
@@ -426,11 +429,71 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
             if (observer) observer.disconnect();
           });
 
+          const editingLogId = ref(null);
+          const editingName = ref("");
+          const savingName = ref(false);
+
+          function startEditName(log) {
+            editingLogId.value = log.id || (log.createdAt + log.email);
+            editingName.value = log.displayName || log.name || "";
+          }
+
+          function cancelEditName() {
+            editingLogId.value = null;
+            editingName.value = "";
+          }
+
+          async function saveName(log) {
+            if (!editingName.value.trim()) {
+              error.value = "กรุณาระบุชื่อที่ต้องการ";
+              return;
+            }
+
+            savingName.value = true;
+            error.value = "";
+
+            try {
+              const result = await common.saveLogName({
+                userId: log.userId || "",
+                email: log.email || "",
+                displayName: editingName.value.trim(),
+              }, 15000);
+
+              if (result && result.ok) {
+                // อัปเดตชื่อให้ทุก log ของคนนี้ในตารางที่แสดงอยู่ตอนนี้ทันที (ไม่ต้องรอโหลดใหม่)
+                const matchUserId = String(log.userId || "").trim();
+                const matchEmail = String(log.email || "").trim().toLowerCase();
+                logs.value.forEach((item) => {
+                  const itemUserId = String(item.userId || "").trim();
+                  const itemEmail = String(item.email || "").trim().toLowerCase();
+                  const sameUser = matchUserId && itemUserId
+                    ? itemUserId === matchUserId
+                    : (matchEmail && itemEmail && itemEmail === matchEmail);
+                  if (sameUser) {
+                    item.displayName = editingName.value.trim();
+                  }
+                });
+                editingLogId.value = null;
+                editingName.value = "";
+              } else {
+                error.value = (result && (result.err || result.message)) || "บันทึกชื่อไม่สำเร็จ";
+              }
+            } catch (err) {
+              console.error(err);
+              error.value = err && err.message ? err.message : "บันทึกชื่อไม่สำเร็จ";
+            } finally {
+              savingName.value = false;
+            }
+          }
+
           return {
             activeTab,
             applyRangeSearch,
             applyNameFilter,
+            cancelEditName,
             clearNameFilter,
+            editingLogId,
+            editingName,
             error,
             exportCsv,
             exporting,
@@ -451,9 +514,12 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
             nameSearch,
             openNameDropdown,
             rangeLabel,
+            saveName,
+            savingName,
             selectTab,
             selectedNameLabel,
             sentinel,
+            startEditName,
             toggleNameDropdown,
             totalCount,
             todayKey,
@@ -461,6 +527,7 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
             visibleCount,
             common,
             formatDisplayTime,
+            navItems,
           };
         },
         template: `
@@ -490,7 +557,7 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
                     {{ loading ? 'กำลังโหลด...' : 'รีเฟรช' }}
                   </button>
                   <button class="btn ghost" @click="exportCsv" :disabled="exporting">
-                    {{ exporting ? 'กำลัง export...' : 'Export CSV' }}
+                    {{ exporting ? 'กำลัง export...' : 'ดาวน์โหลด (CSV)' }}
                   </button>
                 </div>
               </div>
@@ -591,23 +658,45 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
                   <thead>
                     <tr>
                       <th>เวลา</th>
-                      <th>ชื่อจาก LINE</th>
+                      <th>ชื่อ</th>
+                      <th>LINE Email</th>
                       <th>พิกัด</th>
                       <th>สถานะ</th>
+                      <th>Edit</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr v-for="(log, idx) in filteredLogs" :key="log.id || (log.createdAt + log.email) || idx">
                       <td>{{ formatDisplayTime(log.createdAt || log.time) }}</td>
                       <td>
-                        <strong>{{ log.displayName || log.name || '-' }}</strong><br>
-                        <span v-if="log.email" class="email-text">{{ log.email }}</span><br>
+                        <strong v-if="log.displayName">{{ log.displayName }}</strong>
+                        <strong v-else style="color:#999">-</strong>
+                      </td>
+                      <td>
+                        <span v-if="log.name" class="email-text">{{ log.name }}</span>
+                        <br v-if="log.name && log.email">
+                        <span v-if="log.email" class="email-text">{{ log.email }}</span>
+                        <span v-if="!log.name && !log.email" style="color:#999">-</span>
                       </td>
                       <td>
                         {{ common.formatNumber(log.lat) || '-' }}, {{ common.formatNumber(log.lng) || '-' }}
                       </td>
                       <td>
                         <span class="pill success">{{ log.status || 'checked_in' }}</span>
+                      </td>
+                      <td>
+                        <div v-if="editingLogId === (log.id || (log.createdAt + log.email))" class="edit-name-row">
+                          <input v-model="editingName" type="text" placeholder="กรุณาระบุชื่อ" class="edit-name-input" />
+                          <button @click="saveName(log)" :disabled="savingName" class="btn-small primary">
+                            {{ savingName ? 'กำลัง...' : 'บันทึก' }}
+                          </button>
+                          <button @click="cancelEditName" :disabled="savingName" class="btn-small ghost">
+                            ยกเลิก
+                          </button>
+                        </div>
+                        <button v-else @click="startEditName(log)" class="btn-small primary">
+                          แก้ไขชื่อ
+                        </button>
                       </td>
                     </tr>
                   </tbody>
@@ -619,7 +708,7 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
                   </div>
                   <div>
                     ข้อมูลจะถูกดึงตามแท็บที่เลือก และจะโหลดเพิ่มอัตโนมัติเมื่อเลื่อนถึงด้านล่าง
-                    <span v-if="hasNameFilter"> ลองพิมพ์ค้นหาหรือกด “ทั้งหมด” เพื่อเคลียร์ตัวกรองชื่อ</span>
+                    <span v-if="hasNameFilter"> ลองพิมพ์ค้นหาหรือกด "ทั้งหมด" เพื่อเคลียร์ตัวกรองชื่อ</span>
                   </div>
                 </div>
 

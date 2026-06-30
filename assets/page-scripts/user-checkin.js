@@ -40,6 +40,15 @@ function withTimeout(promise, ms, message) {
   });
 }
 
+// ป้องกันเบราว์เซอร์ดึงหน้านี้จาก back/forward cache (bfcache) ตอนกดปุ่มย้อนกลับ/ไปข้างหน้า
+// ถ้าเกิดเหตุการณ์นี้ ให้บังคับโหลดหน้าใหม่ทั้งหมดทันที เพื่อไม่ให้ state เก่า (พิกัด/สถานะ/โปรไฟล์เดิม) หลุดมาใช้ซ้ำ
+// นี่คือสิ่งที่ผู้ใช้หมายถึงตอนพูดว่า "ห้ามจับ cache ตอนเช็คอิน"
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) {
+    window.location.reload();
+  }
+});
+
 
       createApp({
         setup() {
@@ -93,7 +102,9 @@ function withTimeout(promise, ms, message) {
 
           async function loadConfig() {
             try {
-              config.value = await common.getConfig(areaId);
+              // ดึงข้อมูลใหม่เสมอ ไม่ใช้ cache เก่า
+              const area = await common.getArea(areaId, 15000);
+              config.value = common.normalizeConfig(area);
             } catch (err) {
               console.error(err);
               setStatus(
@@ -363,9 +374,9 @@ function withTimeout(promise, ms, message) {
                   resolve(false);
                 },
                 {
-                  enableHighAccuracy: true,
+                  enableHighAccuracy: true,  // บังคับใช้ GPS แม่นยำสูง ไม่ใช้ WiFi/network location
                   timeout: 15000,
-                  maximumAge: 0,
+                  maximumAge: 0,  // ห้ามใช้ตำแหน่งที่แคชไว้ ต้องอ่านพิกัดปัจจุบันจากอุปกรณ์เท่านั้นทุกครั้ง
                 },
               );
             });

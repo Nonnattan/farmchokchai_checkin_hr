@@ -633,7 +633,6 @@
           </div>
 
           <app-tabs :items="navItems"></app-tabs>
-          <a class="btn ghost" href="#" @click.prevent="logout">Logout</a>
         </header>
 
         <div class="layout">
@@ -769,6 +768,7 @@
                       <th>Assign</th>
                       <th>Email</th>
                       <th>สถานะ</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -803,10 +803,31 @@
                           {{ area.active === false ? 'inactive' : 'active' }}
                         </span>
                       </td>
+                      <td>
+                        <a
+                          v-if="!String(area.areaId || '').startsWith('__legacy-no-id-')"
+                          class="btn ghost"
+                          style="white-space:nowrap"
+                          :href="'./qr_code.html?areaId=' + encodeURIComponent(area.areaId)"
+                          target="_blank"
+                          @click.stop
+                        >
+                          ดู QR
+                        </a>
+                        <span
+                          v-else
+                          class="btn ghost"
+                          style="opacity:.5;cursor:not-allowed;white-space:nowrap"
+                          title="พื้นที่นี้ยังไม่มีรหัส qr_code กรุณากดบันทึกอีกครั้งเพื่อสร้างรหัส"
+                          @click.stop.prevent
+                        >
+                          ดู QR
+                        </span>
+                      </td>
                     </tr>
                     <tr v-if="!areas.length">
                       <td
-                        colspan="6"
+                        colspan="7"
                         class="small"
                         style="padding: 20px; text-align: center"
                       >
@@ -850,7 +871,16 @@
               ID: {{ editing.areaId }}<br />
               Name: {{ editing.areaName }}<br />
               Lat/Lng: {{ formatNumber(editing.lat) }}, {{
-              formatNumber(editing.lng) }}
+              formatNumber(editing.lng) }}<br />
+              <a
+                v-if="!draftMode && !String(editing.areaId || '').startsWith('__legacy-no-id-')"
+                class="btn ghost"
+                style="margin-top:8px;display:inline-block"
+                :href="'./qr_code.html?areaId=' + encodeURIComponent(editing.areaId)"
+                target="_blank"
+              >
+                ดู QR ของพื้นที่นี้
+              </a>
             </div>
             <div class="helper-box" v-else>
               เลือกพื้นที่จากตารางด้านซ้าย หรือกด
@@ -863,7 +893,18 @@
               <div class="form-grid">
                 <div class="field">
                   <label>qr_code / areaId</label>
-                  <input v-model="editing.areaId" placeholder="qr_code" />
+                  <input
+                    v-model="editing.areaId"
+                    placeholder="เว้นว่างไว้ได้ ระบบจะสร้างรหัสให้อัตโนมัติ"
+                    :disabled="!draftMode"
+                    :title="!draftMode ? 'แก้ไขรหัสของพื้นที่ที่มีอยู่แล้วไม่ได้ เพื่อป้องกันข้อมูลสับสน หากต้องการเปลี่ยนรหัส ให้กด + เพิ่มพื้นที่ เพื่อสร้างใหม่' : ''"
+                  />
+                  <div class="assign-help" v-if="draftMode">
+                    เว้นว่างไว้ได้ ระบบจะสร้างรหัสไม่ซ้ำให้อัตโนมัติตอนกดบันทึก
+                  </div>
+                  <div class="assign-help" v-else>
+                    รหัสนี้ถูกล็อกไว้เพื่อป้องกันบันทึกทับผิดพื้นที่ กด "+ เพิ่มพื้นที่" หากต้องการสร้างรายการใหม่
+                  </div>
                 </div>
 
                 <div class="field">

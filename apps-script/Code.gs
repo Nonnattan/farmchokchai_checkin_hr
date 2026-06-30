@@ -20,6 +20,63 @@ const LOG_HEADERS = [
   "status",
 ];
 
+// ชีต Logs รุ่นเก่า (ก่อนระบบนี้) ใช้หัวคอลัมน์ชื่ออื่น — แมปชื่อเก่า -> ชื่อใหม่ที่โค้ดนี้ต้องใช้
+// เพื่อให้ข้อมูลเก่าที่มีอยู่แล้วยังอ่านได้ถูกต้องหลัง migrate (ไม่ลบข้อมูลเดิม แค่เปลี่ยนชื่อหัวคอลัมน์/เพิ่มคอลัมน์ที่ขาด)
+const LEGACY_LOG_HEADER_RENAME = {
+  "Name": "displayName",
+  "Email": "email",
+  "Phone": "phone",
+  "Lat": "lat",
+  "Lng": "lng",
+  "Time": "createdAt",
+};
+
+/**
+ * ตรวจและแก้ไขหัวคอลัมน์ของชีต Logs ให้ตรงกับ LOG_HEADERS เสมอ
+ * - ถ้าเจอหัวคอลัมน์เก่า (Name/Email/Phone/Lat/Lng/Time) จะเปลี่ยนชื่อหัวให้ตรง schema ใหม่ทันที (ข้อมูลแถวเดิมไม่เสีย เพราะคอลัมน์ตำแหน่งเดิม)
+ * - คอลัมน์ใหม่ที่ขาดไปจาก schema เดิม (เช่น createdAt ถ้าไม่เคยมี, userId, site, session, accuracy, pictureUrl, status)
+ *   จะถูกเพิ่มเป็นคอลัมน์ใหม่ต่อท้าย โดยไม่ลบหรือแก้ข้อมูลแถวที่มีอยู่แล้วเลย
+ * - ฟังก์ชันนี้ปลอดภัยที่จะเรียกซ้ำได้ทุกครั้ง (idempotent)
+ */
+function ensureLogsSheetSchema() {
+  const sheet = getSheetByNameOrCreate(LOGS_SHEET_NAME);
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+
+  if (lastRow === 0) {
+    // ชีตยังไม่มีอะไรเลย สร้าง header ใหม่ตาม schema ปัจจุบัน
+    sheet.appendRow(LOG_HEADERS);
+    return sheet;
+  }
+
+  const headerRange = sheet.getRange(1, 1, 1, Math.max(lastCol, 1));
+  let headers = headerRange.getValues()[0].map((h) => String(h || "").trim());
+
+  // 1) เปลี่ยนชื่อหัวคอลัมน์เก่า -> ชื่อใหม่ (ไม่ย้ายตำแหน่งคอลัมน์ ไม่กระทบข้อมูลแถวที่มีอยู่)
+  let renamed = false;
+  headers = headers.map((h) => {
+    if (LEGACY_LOG_HEADER_RENAME[h]) {
+      renamed = true;
+      return LEGACY_LOG_HEADER_RENAME[h];
+    }
+    return h;
+  });
+
+  // 2) หาคอลัมน์ใหม่ใน schema ปัจจุบันที่ชีตยังไม่มี แล้วเพิ่มต่อท้าย
+  const existing = new Set(headers.filter(Boolean));
+  const missing = LOG_HEADERS.filter((h) => !existing.has(h));
+
+  if (renamed) {
+    headerRange.setValues([headers]);
+  }
+
+  if (missing.length > 0) {
+    sheet.getRange(1, headers.length + 1, 1, missing.length).setValues([missing]);
+  }
+
+  return sheet;
+}
+
 // Schema ตรงกับ Google Sheet จริง
 const AREA_HEADERS = [
   "lat",
@@ -128,6 +185,8 @@ function doPost(e) {
       }
     } else if (action === "logs") {
       result = saveLog(payload);
+    } else if (action === "saveLogName") {
+      result = handleSaveLogName(payload);
     } else {
       result = { ok: false, error: "ไม่พบ Action POST: " + action };
     }
@@ -192,6 +251,27 @@ function handleGetLocation() {
   return { ok: true, data: data };
 }
 
+// สร้างรหัส qr_code ใหม่ที่ไม่ซ้ำกับของเดิมในชีต (ตัวอักษร+เลขสุ่ม พร้อม timestamp)
+function generateUniqueQrCode(existingIds) {
+  const used = new Set((existingIds || []).map((v) => String(v || "").trim()).filter(Boolean));
+  let candidate = "";
+  let attempt = 0;
+  do {
+    const stamp = new Date();
+    const stampText =
+      stamp.getFullYear() +
+      String(stamp.getMonth() + 1).padStart(2, "0") +
+      String(stamp.getDate()).padStart(2, "0") +
+      String(stamp.getHours()).padStart(2, "0") +
+      String(stamp.getMinutes()).padStart(2, "0") +
+      String(stamp.getSeconds()).padStart(2, "0");
+    const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
+    candidate = "AREA-" + stampText + "-" + rand + (attempt > 0 ? "-" + attempt : "");
+    attempt++;
+  } while (used.has(candidate));
+  return candidate;
+}
+
 function saveLocation(payload) {
   const sheet = getSheetByNameOrCreate("location");
   const data = sheet.getDataRange().getValues();
@@ -206,26 +286,50 @@ function saveLocation(payload) {
     sheet.appendRow(headers);
   }
 
-  // หา ID เดิมเพื่อเทียบ (ใช้ qr_code แทน areaId)
-  const targetId = payload.originalAreaId
-    ? String(payload.originalAreaId).trim()
-    : String(payload.qr_code || payload.areaId).trim();
-  const newId = String(payload.qr_code || payload.areaId).trim() || targetId;
-
-  let rowIndex = -1;
   const qrCodeColIndex = headers.indexOf("qr_code");
 
-  // ค้นหาแถวที่ต้องการแก้ไขโดยใช้ qr_code
-  if (qrCodeColIndex > -1 && data.length > 1) {
+  // รายการ qr_code ที่มีอยู่แล้วทั้งหมด (ใช้ตรวจสอบความซ้ำ และหาแถวเดิม)
+  const existingIds = [];
+  if (qrCodeColIndex > -1) {
     for (let i = 1; i < data.length; i++) {
-      if (String(data[i][qrCodeColIndex]).trim() === targetId) {
+      existingIds.push(String(data[i][qrCodeColIndex] || "").trim());
+    }
+  }
+
+  // targetId = แถวเดิมที่ต้องการ "แก้ไข" (มาจาก originalAreaId ที่ frontend ส่งมาตอนกด save พื้นที่ที่เคยมีอยู่แล้ว)
+  // ถ้าไม่มี originalAreaId แปลว่าเป็นการ "สร้างใหม่" -> ห้ามไปจับคู่ทับแถวเดิมโดยเด็ดขาด
+  const originalId = String(payload.originalAreaId || "").trim();
+  const requestedNewId = String(payload.qr_code || payload.areaId || "").trim();
+  const isCreatingNew = !originalId;
+
+  let newId;
+  if (isCreatingNew) {
+    // กรณีสร้างใหม่: ถ้า frontend ส่งรหัสมาแล้วและไม่ชนกับของเดิม ใช้รหัสนั้นได้
+    // ถ้าไม่ส่งมา หรือรหัสไปชนกับแถวที่มีอยู่แล้ว (เช่นค่าว่าง "" ชนกับแถวว่างเดิม) ให้สร้างรหัสใหม่ที่ไม่ซ้ำเสมอ
+    if (requestedNewId && existingIds.indexOf(requestedNewId) === -1) {
+      newId = requestedNewId;
+    } else {
+      newId = generateUniqueQrCode(existingIds);
+    }
+  } else {
+    // กรณีแก้ไขของเดิม: ใช้รหัสใหม่ที่ระบุมา (ถ้ามีการเปลี่ยนรหัส) มิฉะนั้นคงรหัสเดิมไว้
+    newId = requestedNewId || originalId;
+  }
+
+  const targetId = isCreatingNew ? "" : originalId;
+
+  let rowIndex = -1;
+
+  // ค้นหาแถวที่ต้องการแก้ไขโดยใช้ qr_code (เฉพาะกรณีแก้ไขของเดิมเท่านั้น ห้ามค้นหาตอนสร้างใหม่)
+  if (!isCreatingNew && qrCodeColIndex > -1 && data.length > 1) {
+    for (let i = 1; i < data.length; i++) {
+      if (targetId !== "" && String(data[i][qrCodeColIndex]).trim() === targetId) {
         rowIndex = i + 1; // +1 เพราะแถวใน Apps Script เริ่มที่ 1
         break;
       }
     }
   }
 
-  const now = new Date().toISOString();
   const rowData = [];
   const savedObj = {};
 
@@ -284,14 +388,14 @@ function deleteLocation(payload) {
     }
   }
 
-  // ลบข้อมูลการ Assign ในชีต AreaAssignments ด้วย
+  // ลบข้อมูลการ Assign ในชีต AreaAssignments ด้วย (ใช้คอลัมน์ qr_code ให้ตรงกับ AREA_ASSIGNMENT_HEADERS)
   const asSheet = getSheetByNameOrCreate("AreaAssignments");
   const asData = asSheet.getDataRange().getValues();
   if (asData.length > 0) {
-    const asAreaIdColIdx = asData[0].indexOf("areaId");
-    if (asAreaIdColIdx > -1) {
+    const asQrCodeColIdx = asData[0].indexOf("qr_code");
+    if (asQrCodeColIdx > -1) {
       for (let j = asData.length - 1; j > 0; j--) {
-        if (String(asData[j][asAreaIdColIdx]).trim() === targetId) {
+        if (String(asData[j][asQrCodeColIdx]).trim() === targetId) {
           asSheet.deleteRow(j + 1);
         }
       }
@@ -307,33 +411,25 @@ function deleteLocation(payload) {
  * =======================================================================
  */
 
-function updateAreaAssignments(areaId, assignees) {
+function updateAreaAssignments(qrCode, assignees) {
   const sheet = getSheetByNameOrCreate("AreaAssignments");
   let data = sheet.getDataRange().getValues();
   const headers =
     data.length > 0
       ? data[0]
-      : [
-          "areaId",
-          "email",
-          "uid",
-          "role",
-          "displayName",
-          "active",
-          "updatedAt",
-        ];
+      : AREA_ASSIGNMENT_HEADERS;
 
   if (data.length === 0) {
     sheet.appendRow(headers);
     data = [headers];
   }
 
-  const areaIdColIndex = headers.indexOf("areaId");
+  const qrCodeColIndex = headers.indexOf("qr_code");
 
   // ลบข้อมูล Assign เก่าทั้งหมดของพื้นที่นี้ (ลบจากล่างขึ้นบน)
-  if (areaIdColIndex > -1 && data.length > 1) {
+  if (qrCodeColIndex > -1 && data.length > 1) {
     for (let i = data.length - 1; i > 0; i--) {
-      if (String(data[i][areaIdColIndex]).trim() === String(areaId).trim()) {
+      if (String(data[i][qrCodeColIndex]).trim() === String(qrCode).trim()) {
         sheet.deleteRow(i + 1);
       }
     }
@@ -347,9 +443,9 @@ function updateAreaAssignments(areaId, assignees) {
 
     for (let j = 0; j < headers.length; j++) {
       const h = headers[j];
-      if (h === "areaId") {
-        rowData.push(areaId);
-      } else if (h === "updatedAt") {
+      if (h === "qr_code") {
+        rowData.push(qrCode);
+      } else if (h === "updatedAt" || h === "createdAt") {
         rowData.push(now);
       } else {
         rowData.push(assignee[h] !== undefined ? assignee[h] : "");
@@ -495,17 +591,57 @@ function deleteUser(payload) {
  */
 
 function handleGetLogs(params) {
-  let data = getSheetDataAsObjects("logs");
+  ensureLogsSheetSchema();
+  let data = getSheetDataAsObjects(LOGS_SHEET_NAME);
 
-  // รองรับ parameter limit ในการดึง log
-  if (params.limit) {
-    const limit = parseInt(params.limit, 10);
-    if (!isNaN(limit) && limit > 0) {
-      data = data.slice(-limit); // เอาเฉพาะจำนวนที่ขอ (ดึงจากท้ายสุด)
-    }
+  // กรองตาม userId หรือ email สำหรับการค้นหาชื่อ
+  if (params.userId) {
+    const searchUserId = String(params.userId).trim();
+    data = data.filter(log => String(log.userId || '').trim() === searchUserId);
+  } else if (params.email) {
+    const searchEmail = String(params.email).toLowerCase();
+    data = data.filter(log => String(log.email || '').toLowerCase() === searchEmail);
   }
 
-  return { ok: true, data: data };
+  // กรองตามชื่อ (displayName) ถ้ามี
+  if (params.name) {
+    const searchName = String(params.name).toLowerCase();
+    data = data.filter(log => String(log.displayName || log.name || '').toLowerCase().includes(searchName));
+  }
+
+  // กรองตามช่วงวันที่ (ตีความ from/to เป็นวันที่ตามเขตเวลา Asia/Bangkok ไม่ใช่ UTC
+  // เพราะ frontend ส่งวันที่แบบ Bangkok-local มา เช่น "วันนี้" ตาม timezone ไทย
+  // Bangkok = UTC+7 ดังนั้นเที่ยงคืนของวันที่ Bangkok = เวลา -07:00 ของวันเดียวกันใน UTC)
+  if (params.from || params.to) {
+    const fromDate = params.from ? new Date(params.from + 'T00:00:00.000+07:00') : null;
+    const toDate = params.to ? new Date(params.to + 'T23:59:59.999+07:00') : null;
+
+    data = data.filter(log => {
+      const logDate = new Date(log.createdAt);
+      return (!fromDate || logDate >= fromDate) && (!toDate || logDate <= toDate);
+    });
+  }
+
+  // เรียงลำดับจากใหม่ไปเก่า (descending by createdAt)
+  data.sort((a, b) => {
+    const timeA = new Date(a.createdAt || 0).getTime();
+    const timeB = new Date(b.createdAt || 0).getTime();
+    return timeB - timeA;
+  });
+
+  // สำหรับ Export ไม่ต้องแบ่งหน้า
+  if (params.export) {
+    return { ok: true, data: data };
+  }
+
+  const offset = parseInt(params.offset || 0, 10);
+  const limit = parseInt(params.limit || 15, 10);
+  const total = data.length;
+  const hasMore = (offset + limit) < total;
+
+  data = data.slice(offset, offset + limit);
+
+  return { ok: true, data: data, meta: { total: total, hasMore: hasMore } };
 }
 
 /**
@@ -528,90 +664,159 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
 
 /**
  * ตรวจสอบว่าพิกัดอยู่ในขอบเขตที่กำหนดหรือไม่ (Server-side Validation)
+ *
+ * ⚠️ ข้อกำหนดสำคัญ: ฟังก์ชันนี้ต้อง "ไม่มีการอนุโลม" ระยะทางใดๆ ทั้งสิ้น
+ * ห้ามเพิ่มค่าบัฟเฟอร์/ระยะผ่อนปรน (เช่น +5.5 เมตร หรือใช้ accuracy มาขยายขอบเขต) เด็ดขาด
+ * ผู้ใช้ต้องอยู่ในกรอบสี่เหลี่ยมที่ตั้งไว้จริงเท่านั้นจึงเช็กอินผ่าน — นี่คือเจตนาของระบบ ไม่ใช่บั๊ก
  */
 function validateGeofence(payload) {
-  try {
-    const areaId = payload.areaId || "default";
-    const lat = Number(payload.lat);
-    const lng = Number(payload.lng);
-    
-    if (isNaN(lat) || isNaN(lng)) return { ok: false, err: "พิกัดไม่ถูกต้อง" };
+  const areaId = payload.areaId || "default";
+  const lat = Number(payload.lat);
+  const lng = Number(payload.lng);
 
-    const areas = getSheetDataAsObjects("location");
-    // ค้นหาพื้นที่โดยเน้นที่ areaId หรือ qr_code (รองรับ Legacy)
-    let area = areas.find(a => {
-      const id = String(a.areaId || a.qr_code || "").trim();
-      return id === String(areaId).trim();
-    });
+  if (isNaN(lat) || isNaN(lng)) return { ok: false, err: "พิกัดไม่ถูกต้อง" };
 
-    // ถ้าไม่พบพื้นที่ ให้ใช้ค่า default
-    if (!area) {
-      area = DEFAULT_AREA;
-    }
+  const areas = getSheetDataAsObjects("location");
+  // ค้นหาพื้นที่โดยเน้นที่ areaId หรือ qr_code (รองรับ Legacy)
+  let area = areas.find(a => {
+    const id = String(a.areaId || a.qr_code || "").trim();
+    return id === String(areaId).trim();
+  });
 
-    const centerLat = Number(area.lat || area.centerLat);
-    const centerLng = Number(area.lng || area.centerLng);
-    
-    // คำนวณขอบเขตสี่เหลี่ยม (แบบเดียวกับ frontend)
-    const north = Number(area.north || area.northMeters || 50);
-    const south = Number(area.south || area.southMeters || 50);
-    const east = Number(area.east || area.eastMeters || 80);
-    const west = Number(area.west || area.westMeters || 50);
-
-    // แปลงเมตรเป็นเดลต้าพิกัด (โดยประมาณ)
-    const latDeltaNorth = north / 111320;
-    const latDeltaSouth = south / 111320;
-    const cosLat = Math.cos((centerLat * Math.PI) / 180) || 1;
-    const lngDeltaEast = east / (111320 * cosLat);
-    const lngDeltaWest = west / (111320 * cosLat);
-
-    const minLat = centerLat - latDeltaSouth;
-    const maxLat = centerLat + latDeltaNorth;
-    const minLng = centerLng - lngDeltaWest;
-    const maxLng = centerLng + lngDeltaEast;
-
-    const isInside = lat >= (minLat - 0.00005) && lat <= (maxLat + 0.00005) && 
-                     lng >= (minLng - 0.00005) && lng <= (maxLng + 0.00005);
-
-    if (!isInside) {
-      return { ok: false, err: "ขออภัย คุณอยู่นอกพื้นที่ทำงานที่กำหนดไว้ (" + area.areaName + ")" };
-    }
-
-    return { ok: true };
-  } catch (e) {
-    return { ok: true }; // ในกรณี error ให้ผ่านไปก่อนเพื่อไม่ให้ระบบล่ม
+  // ถ้าไม่พบพื้นที่ ให้ใช้ค่า default
+  if (!area) {
+    area = DEFAULT_AREA;
   }
+
+  const centerLat = Number(area.lat || area.centerLat);
+  const centerLng = Number(area.lng || area.centerLng);
+
+  if (isNaN(centerLat) || isNaN(centerLng)) {
+    // ข้อมูลพื้นที่ผิดปกติ — ปฏิเสธการเช็กอินแทนการปล่อยผ่าน (fail-closed ไม่ใช่ fail-open)
+    return { ok: false, err: "ไม่พบข้อมูลพื้นที่ที่ถูกต้อง กรุณาติดต่อผู้ดูแลระบบ" };
+  }
+
+  // คำนวณขอบเขตสี่เหลี่ยม (แบบเดียวกับ frontend) — ไม่มีการบวกเพิ่มระยะอนุโลมใดๆ
+  const north = Number(area.north || area.northMeters || 50);
+  const south = Number(area.south || area.southMeters || 50);
+  const east = Number(area.east || area.eastMeters || 80);
+  const west = Number(area.west || area.westMeters || 50);
+
+  // แปลงเมตรเป็นเดลต้าพิกัด (โดยประมาณ)
+  const latDeltaNorth = north / 111320;
+  const latDeltaSouth = south / 111320;
+  const cosLat = Math.cos((centerLat * Math.PI) / 180) || 1;
+  const lngDeltaEast = east / (111320 * cosLat);
+  const lngDeltaWest = west / (111320 * cosLat);
+
+  const minLat = centerLat - latDeltaSouth;
+  const maxLat = centerLat + latDeltaNorth;
+  const minLng = centerLng - lngDeltaWest;
+  const maxLng = centerLng + lngDeltaEast;
+
+  // เช็คแบบเข้มงวด: ต้องอยู่ในกรอบพอดี ไม่มี <= / >= บวกเพิ่มระยะใดๆ ทั้งสิ้น
+  const isInside = lat >= minLat && lat <= maxLat &&
+                     lng >= minLng && lng <= maxLng;
+
+  if (!isInside) {
+    const areaLabel = area.areaName || area.remark || areaId;
+    return { ok: false, err: "ขออภัย คุณอยู่นอกพื้นที่ทำงานที่กำหนดไว้ (" + areaLabel + ")" };
+  }
+
+  return { ok: true };
 }
 
 function saveLog(payload) {
-  // --- ส่วนที่แก้ไข: เพิ่มการตรวจสอบความปลอดภัย ---
+  // หมายเหตุสำคัญ: userId ในที่นี้คือ LINE userId (รหัสถาวรจาก LIFF) ซึ่งเป็นตัวจับคู่หลักของคนเช็คอิน
+  // ห้าม fallback เป็น email เพราะจะทำให้ userId ปนกับ email และจับคู่ผิดพลาดตอนแก้ไขชื่อใน Logs
+  // ถ้าไม่มี userId จริงๆ (เคสที่ไม่ผ่าน LIFF) ให้เก็บเป็นค่าว่างไว้ แล้วใช้ email เป็นตัวจับคู่สำรองแทน
+
+  // --- ตรวจสอบพื้นที่ทำงาน (เข้มงวด ไม่มีการอนุโลมระยะทางใดๆ ทั้งสิ้น) ---
   const validation = validateGeofence(payload);
   if (!validation.ok) {
     return { ok: false, err: validation.err };
   }
   // -------------------------------------------
 
-  const sheet = getSheetByNameOrCreate("logs");
+  const sheet = ensureLogsSheetSchema();
   const data = sheet.getDataRange().getValues();
-  const headers =
-    data.length > 0
-      ? data[0]
-      : ["Name", "Email", "Phone", "Lat", "Lng", "Time"];
-
-  if (data.length === 0) {
-    sheet.appendRow(headers);
-  }
+  const headers = data[0];
 
   const rowData = headers.map(function (h) {
-    if (h === "Name") return payload.displayName || payload.name || "";
-    if (h === "Email") return payload.email || "";
-    if (h === "Phone") return payload.phone || "";
-    if (h === "Lat") return payload.lat || "";
-    if (h === "Lng") return payload.lng || "";
-    if (h === "Time") return payload.time || new Date().toISOString();
+    if (h === "createdAt") return payload.time || new Date().toISOString();
+    if (h === "displayName") return payload.displayName || payload.name || "";
+    if (h === "email") return payload.email || "";
+    if (h === "site") return payload.site || "";
+    if (h === "session") return payload.session || "";
+    if (h === "lat") return payload.lat || "";
+    if (h === "lng") return payload.lng || "";
+    if (h === "accuracy") return payload.accuracy || "";
+    if (h === "userId") return payload.userId || "";
+    if (h === "pictureUrl") return payload.pictureUrl || "";
+    if (h === "status") return payload.status || "checked_in";
     return payload[h] || "";
   });
 
   sheet.appendRow(rowData);
   return { ok: true, message: "Log saved successfully" };
+}
+
+/**
+ * บันทึกชื่อที่ admin ใส่ให้กับคนเช็คอินที่ LINE ไม่ได้ตั้งชื่อมา (หรือไม่มีชื่อในระบบ)
+ * ตัวจับคู่หลักคือ LINE userId (รหัสถาวรจาก LIFF ที่ติดมากับทุกครั้งที่เช็คอิน)
+ * ถ้าแถวนั้นไม่มี userId เลย จะ fallback ไปจับคู่ด้วย email แทน
+ *
+ * เมื่อบันทึกสำเร็จ ชื่อจะถูกใส่ให้กับ "ทุกแถว Log ของคนนั้น" ที่ยังไม่มีชื่อ (ไม่ใช่แค่แถวเดียว)
+ * เพื่อให้ตรงกับเงื่อนไข: คนที่มีชื่ออยู่แล้วไม่ต้องให้กรอกซ้ำอีก
+ */
+function handleSaveLogName(payload) {
+  const sheet = ensureLogsSheetSchema();
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+
+  const userIdColIdx = headers.indexOf("userId");
+  const emailColIdx = headers.indexOf("email");
+  const displayNameColIdx = headers.indexOf("displayName");
+
+  if (userIdColIdx === -1 && emailColIdx === -1) {
+    return { ok: false, err: "ไม่พบ userId หรือ email ใน Logs Sheet" };
+  }
+  if (displayNameColIdx === -1) {
+    return { ok: false, err: "ไม่พบ displayName ใน Logs Sheet" };
+  }
+
+  const targetUserId = String(payload.userId || "").trim();
+  const targetEmail = String(payload.email || "").trim().toLowerCase();
+  const newDisplayName = String(payload.displayName || "").trim();
+
+  if (!targetUserId && !targetEmail) {
+    return { ok: false, err: "ไม่พบ userId หรือ email ของรายการที่ต้องการตั้งชื่อ" };
+  }
+  if (!newDisplayName) {
+    return { ok: false, err: "กรุณาระบุชื่อที่ต้องการบันทึก" };
+  }
+
+  let updatedCount = 0;
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const rowUserId = userIdColIdx !== -1 ? String(row[userIdColIdx] || "").trim() : "";
+    const rowEmail = emailColIdx !== -1 ? String(row[emailColIdx] || "").trim().toLowerCase() : "";
+
+    // จับคู่ด้วย userId ก่อนเสมอถ้ามีทั้งสองฝั่ง ถ้าแถวไม่มี userId เลยจึง fallback ไป email
+    const isMatch = targetUserId && rowUserId
+      ? rowUserId === targetUserId
+      : (targetEmail && rowEmail && rowEmail === targetEmail);
+
+    if (isMatch) {
+      row[displayNameColIdx] = newDisplayName;
+      sheet.getRange(i + 1, 1, 1, headers.length).setValues([row]);
+      updatedCount++;
+    }
+  }
+
+  if (updatedCount === 0) {
+    return { ok: false, err: "ไม่พบรายการ Log ที่ตรงกันเพื่ออัปเดตชื่อ" };
+  }
+
+  return { ok: true, message: `อัปเดตชื่อ ${updatedCount} รายการสำเร็จ`, updatedCount: updatedCount };
 }
