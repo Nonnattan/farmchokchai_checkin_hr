@@ -244,6 +244,7 @@
         marker: null,
         rectangle: null,
         suppressOverlayUpdate: false,
+        session: null,
       };
     },
     computed: {
@@ -295,8 +296,7 @@
         return filtered.slice().sort((a, b) => String(a.email).localeCompare(String(b.email)));
       },
       showLogout() {
-        const r = String(this.session?.role || "").toLowerCase();
-        return r === "admin" || r === "masteradmin";
+        return true;
       },
     },
     watch: {

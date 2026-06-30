@@ -11,12 +11,9 @@ const LOG_HEADERS = [
   "email",
   "phone",
   "site",
-  "session",
   "lat",
   "lng",
-  "accuracy",
   "userId",
-  "pictureUrl",
   "status",
 ];
 
@@ -943,17 +940,31 @@ function saveLog(payload) {
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
 
+  // แปลงเวลาปัจจุบันเป็นเวลาไทย (UTC+7) ในรูปแบบ YYYY-MM-DD HH:mm:ss
+  function getThaiTime() {
+    const now = payload.time ? new Date(payload.time) : new Date();
+    const offset = 7 * 60; // UTC+7 in minutes
+    const localMs = now.getTime() + (offset - now.getTimezoneOffset()) * 60000;
+    const d = new Date(localMs);
+    const pad = (n) => String(n).padStart(2, "0");
+    return (
+      d.getUTCFullYear() + "-" +
+      pad(d.getUTCMonth() + 1) + "-" +
+      pad(d.getUTCDate()) + " " +
+      pad(d.getUTCHours()) + ":" +
+      pad(d.getUTCMinutes()) + ":" +
+      pad(d.getUTCSeconds())
+    );
+  }
+
   const rowData = headers.map(function (h) {
-    if (h === "createdAt") return payload.time || new Date().toISOString();
+    if (h === "createdAt") return getThaiTime();
     if (h === "displayName") return resolvedDisplayName;
     if (h === "email") return payload.email || "";
     if (h === "site") return payload.site || "";
-    if (h === "session") return payload.session || "";
     if (h === "lat") return payload.lat || "";
     if (h === "lng") return payload.lng || "";
-    if (h === "accuracy") return payload.accuracy || "";
     if (h === "userId") return resolvedUserId;
-    if (h === "pictureUrl") return payload.pictureUrl || "";
     if (h === "status") return payload.status || "checked_in";
     return payload[h] || "";
   });

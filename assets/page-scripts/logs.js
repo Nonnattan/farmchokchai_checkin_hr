@@ -334,15 +334,29 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
             await applyCurrentTab();
           }
 
-          function csvEscape(value) {
-            return `"${String(value ?? "").replace(/"/g, '""')}"`;
+          function filterExportRows(rows) {
+            const q = nameFilter.value.trim().toLowerCase();
+            if (!q) return rows;
+            return rows.filter((log) => {
+              const name = String(log.displayName || log.name || "")
+                .trim()
+                .toLowerCase();
+              const email = String(log.email || "")
+                .trim()
+                .toLowerCase();
+              return name.includes(q) || email.includes(q);
+            });
           }
 
-          async function exportCsv() {
+          async function exportExcel() {
             exporting.value = true;
             error.value = "";
 
             try {
+              if (!window.XLSX) {
+                throw new Error("ไม่พบไลบรารี Excel — รีเฟรชหน้าแล้วลองใหม่");
+              }
+
               const response = await common.getLogs({
                 ...currentFilterParams(),
                 limit: 10000,
@@ -351,58 +365,41 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
                 raw: true,
               });
 
-              const rows = Array.isArray(response?.data) ? response.data : [];
-              const header = [
-                "วันเวลา",
-                "ชื่อ",
-                "อีเมล",
-                "สถานที่",
-                "เซสชัน",
-                "ละติจูด",
-                "ลองจิจูด",
-                "ความถูกต้อง (เมตร)",
-                "รหัสผู้ใช้ LINE",
-                "รูปภาพ",
-                "สถานะ",
+              const rawRows = Array.isArray(response?.data) ? response.data : [];
+              const rows = filterExportRows(rawRows);
+
+              const header = ["ชื่อ", "อีเมล", "ละติจูด", "ลองจิจูด", "สถานที่", "วันเวลา"];
+              const body = rows.map((row) => [
+                String(row.displayName || row.name || ""),
+                String(row.email || ""),
+                row.lat ?? "",
+                row.lng ?? "",
+                String(row.site || ""),
+                formatDisplayTime(row.createdAt || row.time || ""),
+              ]);
+
+              const sheet = XLSX.utils.aoa_to_sheet([header, ...body]);
+              sheet["!cols"] = [
+                { wch: 24 },
+                { wch: 30 },
+                { wch: 14 },
+                { wch: 14 },
+                { wch: 28 },
+                { wch: 24 },
               ];
 
-              const csvRows = [header.join(",")];
+              const workbook = XLSX.utils.book_new();
+              XLSX.utils.book_append_sheet(workbook, sheet, "เช็คอิน");
 
-              rows.forEach((row) => {
-                csvRows.push(
-                  [
-                    csvEscape(formatDisplayTime(row.createdAt || row.time || "")),
-                    csvEscape(row.displayName || row.name || ""),
-                    csvEscape(row.email || ""),
-                    csvEscape(row.site || ""),
-                    csvEscape(row.session || ""),
-                    csvEscape(row.lat ?? ""),
-                    csvEscape(row.lng ?? ""),
-                    csvEscape(row.accuracy ?? ""),
-                    csvEscape(row.userId || ""),
-                    csvEscape(row.pictureUrl || ""),
-                    csvEscape(row.status || "checked_in"),
-                  ].join(","),
-                );
-              });
-
-              // เติม UTF-8 BOM (\ufeff) ไว้หน้าไฟล์ เพื่อให้ Excel เปิดแล้วภาษาไทยไม่เพี้ยน/ไม่เป็นตัวอักษรมั่ว
-              const blob = new Blob(["\ufeff" + csvRows.join("\n")], {
-                type: "text/csv;charset=utf-8;",
-              });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement("a");
               const stamp = new Date()
                 .toISOString()
                 .replace(/[:.]/g, "-")
                 .slice(0, 19);
 
-              a.href = url;
-              a.download = `checkin_logs_${activeTab.value}_${stamp}.csv`;
-              document.body.appendChild(a);
-              a.click();
-              a.remove();
-              URL.revokeObjectURL(url);
+              XLSX.writeFile(
+                workbook,
+                `checkin_logs_${activeTab.value}_${stamp}.xlsx`,
+              );
             } catch (err) {
               console.error(err);
               error.value =
@@ -524,7 +521,7 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
             editingLogId,
             editingName,
             error,
-            exportCsv,
+            exportExcel,
             exporting,
             fetchLogs,
             filteredLogs,
@@ -588,8 +585,8 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
                   <button class="btn ghost" @click="fetchLogs({ reset: true })" :disabled="loading || loadingMore || exporting">
                     {{ loading ? 'กำลังโหลด...' : 'รีเฟรช' }}
                   </button>
-                  <button class="btn ghost" @click="exportCsv" :disabled="exporting">
-                    {{ exporting ? 'กำลัง export...' : 'ดาวน์โหลด (CSV)' }}
+                  <button class="btn ghost" @click="exportExcel" :disabled="exporting">
+                    {{ exporting ? 'กำลัง export...' : 'ดาวน์โหลด Excel' }}
                   </button>
                 </div>
               </div>
