@@ -63,10 +63,10 @@ window.addEventListener("pageshow", (event) => {
           const subMessage = ref("กดปุ่มด้านล่างเพื่อเริ่มเช็กอิน");
 
           const query = new URLSearchParams(location.search);
-          const areaId = query.get("areaId") || query.get("site") || "default";
+          const areaId = query.get("areaId") || query.get("qr_code") || query.get("site") || "";
           const session = query.get("session") || "-";
           const site = computed(
-            () => query.get("site") || config.value.siteName || "-",
+            () => query.get("site") || config.value.siteName || config.value.areaName || "-",
           );
           const boundary = computed(() => common.buildBoundary(config.value));
 

@@ -254,7 +254,15 @@ function getSheetDataAsObjects(sheetName) {
  */
 
 function handleGetLocation() {
-  const data = getSheetDataAsObjects("location");
+  const rawData = getSheetDataAsObjects("location");
+  // แมปข้อมูลให้มี areaId และ areaName เสมอ เพื่อให้ frontend ใช้งานง่าย
+  const data = rawData.map(row => {
+    return {
+      ...row,
+      areaId: row.areaId || row.qr_code || "",
+      areaName: row.areaName || row.remark || row.siteName || ""
+    };
+  });
   console.log("Debug - handleGetLocation returned " + data.length + " areas");
   return { ok: true, data: data };
 }

@@ -454,8 +454,8 @@
     const area = normalizeArea(raw);
     return {
       ...area,
-      siteName: String(raw?.siteName || raw?.areaName || area.areaName).trim() || area.areaName,
-      remark: String(raw?.remark || raw?.note || area.note).trim() || area.note,
+      siteName: String(raw?.siteName || raw?.areaName || area.areaName || "").trim() || area.areaName || "พื้นที่ทั่วไป",
+      remark: String(raw?.remark || raw?.note || area.note || "").trim() || area.note || "เช็กอินภายในพื้นที่ที่กำหนด",
       id: area.areaId,
       lat: area.centerLat,
       lng: area.centerLng,
@@ -803,6 +803,8 @@
     parseBangkokDateTime,
     getVisibleAreas,
     normalizeArea,
+    normalizeAreaList,
+    normalizeConfig,
     normalizeUser,
   };
 })();
