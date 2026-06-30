@@ -13,6 +13,7 @@ const LOG_HEADERS = [
   "site",
   "lat",
   "lng",
+  "accuracy",
   "userId",
   "status",
 ];
@@ -86,6 +87,7 @@ const AREA_HEADERS = [
   "assign",
   "email",
   "qr_code",
+  "maxAccuracy",
 ];
 
 const AREA_ASSIGNMENT_HEADERS = [
@@ -169,7 +171,25 @@ function doGet(e) {
 }
 
 function doPost(e) {
+  // =======================================================================
+  // ล็อกสคริปต์ก่อนเขียนข้อมูลลง Google Sheet ทุกครั้ง (จุดสำคัญที่แก้บั๊ก Logs มีแค่แถวเดียว)
+  // -----------------------------------------------------------------------
+  // สาเหตุเดิม: appendRow() ของ Apps Script ไม่ได้ atomic จริงๆ มันอ่าน "แถวล่าสุด" ก่อน
+  // แล้วค่อยเขียนแถวถัดไป ถ้ามีคนกดเช็คอินพร้อมกันหลายคน (เช่น ทัวร์ทั้งกลุ่มสแกน QR
+  // เวลาไล่เลี่ยกัน) แต่ละ request จะแย่งกันอ่าน/เขียนจังหวะเดียวกัน ทำให้บาง request
+  // เขียนทับแถวของอีก request หนึ่งโดยไม่ตั้งใจ ผลคือเช็คอินเข้ามาหลายคนแต่ใน Sheet
+  // เหลือแค่แถวเดียว (หรือไม่กี่แถว) ทั้งที่โค้ดส่วน saveLog() เขียนถูกต้องอยู่แล้ว
+  // วิธีแก้คือบังคับให้ทุก request ที่จะเขียนข้อมูล เข้าคิวทีละ 1 request เท่านั้น
+  // =======================================================================
+  const lock = LockService.getScriptLock();
   try {
+    const gotLock = lock.tryLock(10000); // รอคิวได้สูงสุด 10 วินาที
+    if (!gotLock) {
+      throw new Error(
+        "ระบบมีผู้ใช้งานพร้อมกันจำนวนมาก กรุณาลองกดเช็คอินใหม่อีกครั้ง",
+      );
+    }
+
     // ตรวจสอบว่ามีข้อมูลส่งมาหรือไม่
     if (!e.postData || !e.postData.contents) {
       throw new Error("No payload provided");
@@ -202,6 +222,9 @@ function doPost(e) {
     return responseJson(result);
   } catch (err) {
     return responseJson({ ok: false, error: err.message });
+  } finally {
+    // ปล่อยล็อกเสมอไม่ว่าจะสำเร็จหรือ error เพื่อให้ request ถัดไปในคิวทำงานต่อได้
+    lock.releaseLock();
   }
 }
 
@@ -219,8 +242,14 @@ function responseJson(data) {
 }
 
 // ค้นหา Sheet ถ้าไม่มีให้สร้างใหม่
+// หมายเหตุ: ใช้ SPREADSHEET_ID เปิดไฟล์เป้าหมายแบบเจาะจงเสมอ (ไม่ใช้ getActiveSpreadsheet())
+// เพราะ getActiveSpreadsheet() จะอ้างอิงถูกก็ต่อเมื่อสคริปต์ถูก "ผูก" กับ Google Sheet ไฟล์นั้นโดยตรง
+// ถ้าโปรเจกต์ Apps Script ถูกสร้างแยกต่างหาก หรือถูกคัดลอกไปเป็นโปรเจกต์ใหม่ตอน deploy ซ้ำ
+// (ซึ่งเกิดขึ้นได้ง่ายเวลาทำตามขั้นตอน "วางทับใน Apps Script Editor" ในเอกสาร)
+// getActiveSpreadsheet() อาจหาไม่เจอหรือชี้ไปคนละไฟล์ ทำให้ข้อมูลเช็คอินไม่ถูกเขียนลง
+// Google Sheet ที่ผู้ใช้เปิดดูอยู่จริง ใช้ openById(SPREADSHEET_ID) จึงชัดเจนและเชื่อถือได้กว่า
 function getSheetByNameOrCreate(sheetName) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   let sheet = ss.getSheetByName(sheetName);
   if (!sheet) {
     sheet = ss.insertSheet(sheetName);
@@ -933,8 +962,14 @@ function validateGeofence(payload) {
   const areaId = payload.areaId || "default";
   const lat = Number(payload.lat);
   const lng = Number(payload.lng);
+  const accuracy = Number(payload.accuracy || 999); // รับค่าความคลาดเคลื่อนมาด้วย
 
   if (isNaN(lat) || isNaN(lng)) return { ok: false, err: "พิกัดไม่ถูกต้อง" };
+  
+  // ปฏิเสธพิกัดที่คลาดเคลื่อนสูงเกินไป โดยใช้ค่า maxAccuracy จาก Config (ค่าเริ่มต้น 30 เมตร)
+  // เพื่อป้องกันการ "กระโดด" ของ GPS นอกพื้นที่
+  const maxAccuracy = Number(payload.maxAccuracy || 30);
+  if (accuracy > maxAccuracy) return { ok: false, err: "สัญญาณ GPS ไม่เสถียร (Accuracy: " + accuracy.toFixed(1) + "m ต้องน้อยกว่า " + maxAccuracy + "m) กรุณายืนในที่โล่งแล้วลองใหม่" };
 
   const areas = getSheetDataAsObjects("location");
   // ค้นหาพื้นที่โดยเน้นที่ areaId หรือ qr_code (รองรับ Legacy)
@@ -1020,6 +1055,7 @@ function saveLog(payload) {
     if (h === "site") return payload.site || "";
     if (h === "lat") return payload.lat || "";
     if (h === "lng") return payload.lng || "";
+    if (h === "accuracy") return payload.accuracy || "";
     if (h === "userId") return resolvedUserId;
     if (h === "status") return payload.status || "checked_in";
     return "";

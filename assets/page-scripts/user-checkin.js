@@ -71,6 +71,8 @@ window.addEventListener("pageshow", (event) => {
           const boundary = computed(() => common.buildBoundary(config.value));
 
           const mapEl = ref(null);
+          const currentAccuracy = ref(null);
+          const maxAccuracy = ref(30);
           let map = null;
           let boundaryRect = null;
           let centerMarker = null;
@@ -102,9 +104,9 @@ window.addEventListener("pageshow", (event) => {
 
           async function loadConfig() {
             try {
-              // ดึงข้อมูลใหม่เสมอ ไม่ใช้ cache เก่า
               const area = await common.getArea(areaId, 15000);
               config.value = common.normalizeConfig(area);
+              maxAccuracy.value = Number(config.value.maxAccuracy || 30);
             } catch (err) {
               console.error(err);
               setStatus(
@@ -170,7 +172,7 @@ window.addEventListener("pageshow", (event) => {
               : {};
             const displayName = profile.value?.displayName || "";
 
-            return {
+          return {
               ...pending,
               site: site.value,
               session,
@@ -180,6 +182,7 @@ window.addEventListener("pageshow", (event) => {
               lat,
               lng,
               accuracy,
+              maxAccuracy: maxAccuracy.value,
               time: common.formatBangkokNow ? common.formatBangkokNow() : new Date().toISOString(),
               userId: profile.value?.userId || "",
             };
@@ -238,6 +241,7 @@ window.addEventListener("pageshow", (event) => {
           function updateCurrentPosition(lat, lng, accuracy) {
             if (!map || !window.L) return;
 
+            currentAccuracy.value = Number(accuracy) || 0;
             const ll = [lat, lng];
             const radius = Math.max(Number(accuracy) || 10, 10);
 
@@ -267,6 +271,7 @@ window.addEventListener("pageshow", (event) => {
           }
 
           // ปรับปรุงฟังก์ชันค้นหาพิกัดให้อยู่ในรูป Promise ปลอดภัยและคืนค่าความถูกต้องชัวร์ที่สุด
+          // ใช้ Multi-Sample Averaging เพื่อให้ได้พิกัดที่นิ่งและแม่นยำขึ้น
           function performLocationLookup() {
             return new Promise((resolve) => {
               if (!navigator.geolocation) {
@@ -278,99 +283,186 @@ window.addEventListener("pageshow", (event) => {
                 return resolve(false);
               }
 
+              const EXCELLENT_ACCURACY = 10; // ถ้า Accuracy ดีกว่า 10 เมตร ให้ผ่านทันที (ไม่ต้องรอครบ 3 ครั้ง)
+              const MAX_ACCURACY = 15; // ยอมรับเฉพาะ Accuracy ที่ดีกว่า 15 เมตร
+              const MAX_SAMPLES = 3;
+              let samples = [];
+              let sampleCount = 0;
+              let watchId = null;
+              let resolved = false;
+
               setStatus(
                 "loading",
-                "กำลังเช็กตำแหน่งพิกัด...",
+                "กำลังเช็กตำแหน่งพิกัด (ครั้งที่ 1 จาก 3)...",
                 "ระบบกำลังเชื่อมต่อสัญญาณดาวเทียม GPS โปรดรอสักครู่",
               );
 
               // ตัวคุมเวลาจำกัดการค้นหาภายในฟังก์ชันตรงๆ ตัดปัญหา Timeout ค้าง
               const safetyTimer = setTimeout(() => {
-                setStatus(
-                  "error",
-                  "ค้นหาพิกัดใช้เวลานานเกินไป",
-                  "สัญญาณระบุตำแหน่งล่าช้า กรุณาเปิด Wi-Fi หรือขยับไปที่โล่งแล้วกดลองใหม่อีกครั้ง",
-                );
-                resolve(false);
+                if (watchId !== null) {
+                  navigator.geolocation.clearWatch(watchId);
+                }
+                if (!resolved) {
+                  resolved = true;
+                  setStatus(
+                    "error",
+                    "ค้นหาพิกัดใช้เวลานานเกินไป",
+                    "สัญญาณระบุตำแหน่งล่าช้า กรุณาเปิด Wi-Fi หรือขยับไปที่โล่งแล้วกดลองใหม่อีกครั้ง",
+                  );
+                  resolve(false);
+                }
               }, FLOW_TIMEOUT_MS);
 
-              navigator.geolocation.getCurrentPosition(
+              // ใช้ watchPosition แทน getCurrentPosition เพื่อให้ได้หลายตัวอย่างและเลือกตัวที่ดีที่สุด
+              watchId = navigator.geolocation.watchPosition(
                 (pos) => {
-                  clearTimeout(safetyTimer);
+                  if (resolved) return;
+
                   const lat = pos.coords.latitude;
                   const lng = pos.coords.longitude;
                   const accuracy = pos.coords.accuracy;
 
-                  updateCurrentPosition(lat, lng, accuracy);
-
-                  const inside = common.isInsideBoundary(
-                    lat,
-                    lng,
-                    boundary.value,
-                  );
-
-                  if (inside) {
+                  // กรองเฉพาะพิกัดที่มี Accuracy ดีพอ (ไม่เกิน 15 เมตร)
+                  if (accuracy <= MAX_ACCURACY) {
+                    samples.push({ lat, lng, accuracy });
+                    sampleCount++;
+                    
                     setStatus(
-                      "success",
-                      "📍 อยู่ในพื้นที่ทำงาน",
-                      "ตรวจสอบสำเร็จ! ระบบกำลังบันทึกข้อมูลและนำคุณไปยังหน้าถัดไป...",
+                      "loading",
+                      `กำลังเช็กตำแหน่งพิกัด (ครั้งที่ ${sampleCount} จาก ${MAX_SAMPLES})...`,
+                      `ความแม่นยำ: ${accuracy.toFixed(1)} เมตร (ต้องน้อยกว่า ${MAX_ACCURACY} เมตร)`,
                     );
-                    
-                    // ป้องกันการกดย้ำๆ แล้วข้ามผ่าน: เคลียร์ค่าเก่าก่อนบันทึกใหม่
-                    clearPendingFlow();
-                    common.clearPendingCheckin?.();
 
-                    const payload = buildPayload(lat, lng, accuracy);
-                    // เพิ่มข้อมูลเพื่อการตรวจสอบที่เข้มงวดขึ้น
-                    payload.clientVerified = true;
-                    payload.areaId = areaId;
-                    
-                    common.setPendingCheckin(payload);
-
-                    // ล็อคปุ่มทันทีเพื่อป้องกันการกดย้ำในจังหวะเปลี่ยนหน้า
-                    loading.value = true;
-
-                    setTimeout(() => {
-                      // ใช้ window.location.href แทน replace เพื่อความชัวร์ในบาง browser
-                      // และตรวจสอบอีกครั้งว่า payload ยังอยู่
-                      if (common.getPendingCheckin()) {
-                         window.location.href = "../processing.html";
+                    // ถ้า Accuracy ดีกว่า 10 เมตร ให้ผ่านทันที (ไม่ต้องรอครบ 3 ครั้ง)
+                    if (accuracy <= EXCELLENT_ACCURACY) {
+                      navigator.geolocation.clearWatch(watchId);
+                      clearTimeout(safetyTimer);
+                      resolved = true;
+                      updateCurrentPosition(lat, lng, accuracy);
+                      const inside = common.isInsideBoundary(lat, lng, boundary.value);
+                      if (inside) {
+                        setStatus("success", "📍 อยู่ในพื้นที่ทำงาน", "ตรวจสอบสำเร็จ! ระบบกำลังบันทึกข้อมูลและนำคุณไปยังหน้าถัดไป...");
+                        clearPendingFlow();
+                        common.clearPendingCheckin?.();
+                        const payload = buildPayload(lat, lng, accuracy);
+                        payload.clientVerified = true;
+                        payload.areaId = areaId;
+                        payload.sampleCount = 1;
+                        common.setPendingCheckin(payload);
+                        loading.value = true;
+                        setTimeout(() => {
+                          // แก้บั๊ก: เดิมพาไป ../success.html ตรงๆ ซึ่งข้าม processing.html ไปเลย
+                          // ทำให้ไม่มีการเรียก common.addLog() (POST ไปยัง Apps Script) เกิดขึ้นจริง
+                          // ผลคือหน้าจอแสดง "เช็กอินสำเร็จ" แต่ไม่มีแถวใหม่ถูกเขียนลงชีต Logs เลย
+                          // (เคสนี้เกิดบ่อยเพราะ GPS แม่นยำ <=10 เมตรตั้งแต่ครั้งแรกได้ง่ายเมื่อสัญญาณดี)
+                          // ต้องพาไป processing.html เหมือนอีก path หนึ่งเสมอ เพราะมีแค่ processing.html
+                          // ที่เรียก common.addLog() จริงๆ แล้วค่อย redirect ไป success.html ต่อเมื่อบันทึกสำเร็จ
+                          if (common.getPendingCheckin()) window.location.href = "../processing.html";
+                        }, 300);
                       } else {
-                         loading.value = false;
-                         resolve(false);
+                        setStatus("error", "📍 อยู่นอกพื้นที่ทำงาน", "ตำแหน่งปัจจุบันไม่อยู่ในพื้นที่ที่ยอมรับ");
+                        loading.value = false;
                       }
-                    }, 800);
+                      return resolve(true);
+                    }
+
+                    if (sampleCount >= MAX_SAMPLES) {
+                      // หยุดการดูแลพิกัดและประมวลผลตัวอย่างที่เก็บได้
+                      navigator.geolocation.clearWatch(watchId);
+                      clearTimeout(safetyTimer);
+                      resolved = true;
+
+                      // คำนวณค่าเฉลี่ยของพิกัดทั้งหมด
+                      const avgLat = samples.reduce((sum, s) => sum + s.lat, 0) / samples.length;
+                      const avgLng = samples.reduce((sum, s) => sum + s.lng, 0) / samples.length;
+                      const avgAccuracy = samples.reduce((sum, s) => sum + s.accuracy, 0) / samples.length;
+
+                      updateCurrentPosition(avgLat, avgLng, avgAccuracy);
+
+                      const inside = common.isInsideBoundary(
+                        avgLat,
+                        avgLng,
+                        boundary.value,
+                      );
+
+                      if (inside) {
+                        setStatus(
+                          "success",
+                          "📍 อยู่ในพื้นที่ทำงาน",
+                          "ตรวจสอบสำเร็จ! ระบบกำลังบันทึกข้อมูลและนำคุณไปยังหน้าถัดไป...",
+                        );
+                        
+                        // ป้องกันการกดย้ำๆ แล้วข้ามผ่าน: เคลียร์ค่าเก่าก่อนบันทึกใหม่
+                        clearPendingFlow();
+                        common.clearPendingCheckin?.();
+
+                        const payload = buildPayload(avgLat, avgLng, avgAccuracy);
+                        // เพิ่มข้อมูลเพื่อการตรวจสอบที่เข้มงวดขึ้น
+                        payload.clientVerified = true;
+                        payload.areaId = areaId;
+                        payload.sampleCount = sampleCount; // บันทึกจำนวนตัวอย่างที่ใช้
+                        
+                        common.setPendingCheckin(payload);
+
+                        // ล็อคปุ่มทันทีเพื่อป้องกันการกดย้ำในจังหวะเปลี่ยนหน้า
+                        loading.value = true;
+
+                        setTimeout(() => {
+                          // ใช้ window.location.href แทน replace เพื่อความชัวร์ในบาง browser
+                          // และตรวจสอบอีกครั้งว่า payload ยังอยู่
+                          if (common.getPendingCheckin()) {
+                             window.location.href = "../processing.html";
+                          } else {
+                             loading.value = false;
+                             resolve(false);
+                          }
+                        }, 800);
+                      } else {
+                        clearPendingFlow();
+                        common.clearPendingCheckin?.();
+                        setStatus(
+                          "error",
+                          "❌ อยู่นอกพื้นที่ทำงาน",
+                          "กรุณาเดินเข้ามาในเขตกรอบพื้นที่สีน้ำเงินที่กำหนดบนแผนที่ แล้วกดเช็กอินใหม่อีกครั้ง",
+                        );
+                        resolve(false);
+                      }
+                    }
                   } else {
-                    clearPendingFlow();
-                    common.clearPendingCheckin?.();
+                    // ถ้า Accuracy ไม่ดีพอ ให้ข้ามไปและรอตัวอย่างถัดไป
                     setStatus(
-                      "error",
-                      "❌ อยู่นอกพื้นที่ทำงาน",
-                      "กรุณาเดินเข้ามาในเขตกรอบพื้นที่สีน้ำเงินที่กำหนดบนแผนที่ แล้วกดเช็กอินใหม่อีกครั้ง",
+                      "loading",
+                      `กำลังเช็กตำแหน่งพิกัด (รอสัญญาณที่ดีขึ้น)...`,
+                      `ความแม่นยำปัจจุบัน: ${accuracy.toFixed(1)} เมตร (ต้องน้อยกว่า ${MAX_ACCURACY} เมตร)`,
                     );
-                    resolve(false);
                   }
                 },
                 (err) => {
-                  clearTimeout(safetyTimer);
-                  clearPendingFlow();
-                  console.error("Geolocation Error Logged:", err);
-
-                  let detail =
-                    "กรุณาเปิดบริการตำแหน่งที่ตั้ง (Location Services/GPS) บนอุปกรณ์ของท่านก่อนใช้งาน";
-                  if (err?.code === 1) {
-                    detail =
-                      "สิทธิ์การเข้าถึงตำแหน่งถูกปฏิเสธ! กรุณาเข้าไปที่ตั้งค่ามือถือเพื่อเปิดอนุญาตตำแหน่งสำหรับแอป LINE/Safari";
-                  } else if (err?.code === 2) {
-                    detail =
-                      "ไม่สามารถจับสัญญาณพิกัดพื้นที่ได้ชั่วคราว ลองเปิด Wi-Fi หรือปิด-เปิดตำแหน่งในเครื่องใหม่";
-                  } else if (err?.code === 3) {
-                    detail =
-                      "เวลาการค้นหาตำแหน่งหมดเกลี่ยลง กรุณากดปุ่มเพื่อลองอีกครั้ง";
+                  if (watchId !== null) {
+                    navigator.geolocation.clearWatch(watchId);
                   }
+                  clearTimeout(safetyTimer);
+                  if (!resolved) {
+                    resolved = true;
+                    clearPendingFlow();
+                    console.error("Geolocation Error Logged:", err);
 
-                  setStatus("error", "ไม่สามารถหาพิกัดตำแหน่งได้", detail);
-                  resolve(false);
+                    let detail =
+                      "กรุณาเปิดบริการตำแหน่งที่ตั้ง (Location Services/GPS) บนอุปกรณ์ของท่านก่อนใช้งาน";
+                    if (err?.code === 1) {
+                      detail =
+                        "สิทธิ์การเข้าถึงตำแหน่งถูกปฏิเสธ! กรุณาเข้าไปที่ตั้งค่ามือถือเพื่อเปิดอนุญาตตำแหน่งสำหรับแอป LINE/Safari";
+                    } else if (err?.code === 2) {
+                      detail =
+                        "ไม่สามารถจับสัญญาณพิกัดพื้นที่ได้ชั่วคราว ลองเปิด Wi-Fi หรือปิด-เปิดตำแหน่งในเครื่องใหม่";
+                    } else if (err?.code === 3) {
+                      detail =
+                        "เวลาการค้นหาตำแหน่งหมดเกลี่ยลง กรุณากดปุ่มเพื่อลองอีกครั้ง";
+                    }
+
+                    setStatus("error", "ไม่สามารถหาพิกัดตำแหน่งได้", detail);
+                    resolve(false);
+                  }
                 },
                 {
                   enableHighAccuracy: true,  // บังคับใช้ GPS แม่นยำสูง ไม่ใช้ WiFi/network location
@@ -382,147 +474,79 @@ window.addEventListener("pageshow", (event) => {
           }
 
           async function startCheckInFlow() {
-            if (loading.value) return; // ป้องกันการกดซ้ำซ้อนซ่อนเงื่อนโดยเด็ดขาด
-
+            if (loading.value) return;
             loading.value = true;
-            setStatus(
-              "loading",
-              "กำลังเริ่มตรวจสอบ...",
-              "กำลังจัดเตรียมข้อมูลระบบเช็กอิน",
-            );
 
             try {
-              // 1. ถ้าหากระบบ LINE ยังไม่พร้อมใช้งานให้เริ่มต้นโหลดก่อน
-              if (!liffReady.value) {
-                await initLiff();
+              const result = await performLocationLookup();
+              if (!result) {
+                loading.value = false;
               }
-
-              // 2. ตรวจสอบว่าล็อกอิน LINE หรือยัง
-              if (!liff.isLoggedIn()) {
-  setPendingFlow();
-  setStatus(
-    "loading",
-    "กำลังเข้าสู่ระบบ LINE...",
-    "แอปพลิเคชันกำลังพาคุณไปหน้าเข้าสู่ระบบ และจะพากลับมาทำงานต่ออัตโนมัติ",
-  );
-
-  try {
-    liff.login({ redirectUri: getReturnUrl() });
-  } catch (loginErr) {
-    clearPendingFlow();
-    throw loginErr;
-  }
-
-  return;
-}
-
-
-              // 3. ตั้งค่าผู้ใช้ที่ล็อกอินแล้ว
-              authState.value = "logged_in";
-              if (!profile.value) {
-                profile.value = await liff.getProfile();
-              }
-
-              // 4. เริ่มประมวลผลพิกัด GPS
-              await performLocationLookup();
             } catch (err) {
-  console.error(err);
-  clearPendingFlow();
-  setStatus(
-    "error",
-    "เกิดข้อผิดพลาดในการประมวลผล",
-    err?.message || "ระบบไม่สามารถทำงานต่อได้ กรุณาลองใหม่อีกครั้ง",
-  );
-} finally {
-
-              loading.value = false; // คืนสิทธิ์เปิดให้ปุ่มกดได้เสมอ ไม่ว่าสำเร็จหรือผิดพลาดป้องกันการค้าง
+              console.error("Check-in flow error:", err);
+              setStatus(
+                "error",
+                "เกิดข้อผิดพลาดในระหว่างเช็กอิน",
+                err?.message || "กรุณาลองใหม่อีกครั้ง",
+              );
+              loading.value = false;
             }
           }
 
-          watch(
-            boundary,
-            () => {
-              drawBoundary();
-            },
-            { deep: true },
-          );
-
           onMounted(async () => {
-            await loadConfig();
-            await initLiff();
-            await nextTick();
-            initMap();
+            try {
+              await loadConfig();
+              await initLiff();
+              // Wait for DOM to be ready before initializing map
+              await nextTick();
+              initMap();
+            } catch (err) {
+              console.error("Mount error:", err);
+              setStatus(
+                "error",
+                "ไม่สามารถเตรียมระบบได้",
+                "กรุณารีเฟรชหน้าและลองใหม่อีกครั้ง",
+              );
+            }
           });
 
+          // Re-initialize map when authState changes (after LIFF login)
+          watch(authState, async (newState) => {
+            if (newState === "logged_in") {
+              await nextTick();
+              initMap();
+            }
+          });
+
+          // Redraw boundary when it changes
+          watch(boundary, () => {
+            if (map && mapEl.value) {
+              drawBoundary();
+            }
+          });
+
+
+          watch(boundary, () => {
+            if (map && mapEl.value) {
+              drawBoundary();
+            }
+          });
           return {
+            config,
             loading,
             profile,
+            liffReady,
+            authState,
             statusType,
             message,
             subMessage,
-            mapEl,
-            startCheckInFlow,
-            authState,
             dynamicButtonText,
+            mapEl,
+            site,
+            currentAccuracy,
+            maxAccuracy,
+            startCheckInFlow,
+            performLocationLookup,
           };
         },
-
-        template: `
-          <div class="user-shell">
-            <div class="user-card">
-              <div class="user-logo">LI</div>
-              <h1 class="user-title">ระบบเช็กอิน</h1>
-
-              <div v-if="profile" class="profile-simple">
-                <img v-if="profile.pictureUrl" :src="profile.pictureUrl" alt="profile" />
-                <div v-else class="profile-avatar"></div>
-                <p>{{ profile.displayName }}</p>
-              </div>
-
-              <div class="status-box" :class="statusType">
-                <div class="status-row">
-                  <p class="status-main">{{ message }}</p>
-                  <span
-                    class="small-pill"
-                    :class="statusType === 'success' ? 'good' : (statusType === 'error' ? 'bad' : '')"
-                  >
-                    {{ statusType === 'success' ? 'พร้อมส่งข้อมูล' : (statusType === 'error' ? 'ตรวจสอบใหม่' : 'กำลังทำงาน') }}
-                  </span>
-                </div>
-                <p v-if="subMessage" class="status-sub">{{ subMessage }}</p>
-              </div>
-
-              <button class="btn-massive" @click="startCheckInFlow" :disabled="loading">
-                <span v-if="loading" class="mini-spinner"></span>
-                {{ dynamicButtonText }}
-              </button>
-
-              <div class="hint">
-                {{
-                  authState === 'logged_out'
-                    ? 'กดปุ่มหนึ่งครั้งเพื่อเข้าสู่ LINE แล้วระบบจะพากลับมาเช็กอินต่อให้เสร็จสิ้น'
-                    : 'เมื่อเช็กอินเรียบร้อย ระบบจะนำส่งพิกัดบันทึกข้อมูลเข้า Google Sheet ทันที'
-                }}
-              </div>
-
-              <div class="map-section">
-                <div class="map-head">
-                  <div>
-                    <h2>แผนที่ตำแหน่งปัจจุบัน</h2>
-                    <p>วงสีน้ำเงินคือพื้นที่ที่อนุญาต และจุด/วงกลมคือพิกัดตอนกดเช็กอิน</p>
-                  </div>
-                  <div class="map-badge">Live map</div>
-                </div>
-
-                <div class="map-wrap">
-                  <div ref="mapEl" class="map"></div>
-                </div>
-
-                <div class="map-foot">
-                  ถ้าหากแผนที่ขึ้นไม่เต็มกรอบพื้นที่ หรือพิกัดคลาดเคลื่อน กรุณากดปุ่มเพื่อเช็กอินใหม่อีกครั้ง
-                </div>
-              </div>
-            </div>
-          </div>
-        `,
       }).mount("#app");

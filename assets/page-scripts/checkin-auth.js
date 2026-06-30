@@ -94,10 +94,23 @@ const { createApp, computed, onMounted, ref, nextTick } = Vue;
       );
     }
 
-    function doCheckIn() {
+    async function doCheckIn() {
       if (!currentLocation.value || result.value !== "inside") return;
-      common.addLog({ site: site.value, session, status: "checked_in", lat: currentLocation.value.lat, lng: currentLocation.value.lng, accuracy: currentLocation.value.accuracy, boundary: boundary.value });
-      location.href = "./success.html";
+      // แก้บั๊กแบบเดียวกับใน user-checkin.js: เดิมยิง addLog() แบบไม่ await แล้ว location.href
+      // เปลี่ยนหน้าทันที ซึ่งจะตัด request ที่ค้างอยู่ทิ้งกลางคันในหลายเบราว์เซอร์ (เพราะเป็น
+      // multi-page app ไม่ใช่ SPA หน้าเปลี่ยนจริงๆ) ผลคือ "เช็กอิน" แสดงสำเร็จแต่ไม่มีอะไรถูกบันทึก
+      // ตอนนี้ await ผลลัพธ์ก่อน เช็ก ok:false จาก server แล้วค่อย redirect เฉพาะตอนบันทึกสำเร็จจริง
+      loading.value = true;
+      try {
+        const res = await common.addLog({ site: site.value, session, status: "checked_in", lat: currentLocation.value.lat, lng: currentLocation.value.lng, accuracy: currentLocation.value.accuracy, boundary: boundary.value });
+        if (res && res.ok === false) {
+          throw new Error(res.err || res.error || res.message || "Server ปฏิเสธการบันทึกข้อมูล");
+        }
+        location.href = "./success.html";
+      } catch (err) {
+        loading.value = false;
+        message.value = err?.message || "บันทึกข้อมูลไม่สำเร็จ กรุณาลองใหม่อีกครั้ง";
+      }
     }
 
     onMounted(async () => {

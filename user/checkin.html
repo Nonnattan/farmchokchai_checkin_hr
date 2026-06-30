@@ -264,6 +264,21 @@
         color: #b91c1c;
       }
 
+      .accuracy-display {
+        margin-top: 12px;
+        padding: 12px;
+        border-radius: 12px;
+        background: #f0f9ff;
+        border: 1px solid #bfdbfe;
+        font-size: 13px;
+        color: #1e40af;
+        line-height: 1.5;
+      }
+
+      .accuracy-display b {
+        font-weight: 700;
+      }
+
       @keyframes spin {
         to {
           transform: rotate(360deg);
@@ -273,7 +288,56 @@
   </head>
 
   <body>
-    <div id="app"></div>    <script src="../assets/common.js"></script>
+    <div id="app">
+      <div class="user-shell">
+        <div class="user-card">
+          <div class="user-logo">📍</div>
+          <h1 class="user-title">{{ site }}</h1>
+
+          <div class="profile-simple" v-if="profile">
+            <img v-if="profile.pictureUrl" :src="profile.pictureUrl" class="profile-avatar" />
+            <div v-else class="profile-avatar"></div>
+            <p>{{ profile.displayName }}</p>
+          </div>
+
+          <div class="status-box" :class="statusType">
+            <p class="status-main">{{ message }}</p>
+            <p class="status-sub">{{ subMessage }}</p>
+            <div v-if="currentAccuracy !== null" class="accuracy-display">
+              <b>GPS Accuracy:</b> {{ currentAccuracy.toFixed(1) }}m (ต้องน้อยกว่า {{ maxAccuracy }}m)
+            </div>
+          </div>
+
+          <button
+            class="btn-massive"
+            @click="startCheckInFlow"
+            :disabled="loading || authState === 'logged_out'"
+          >
+            <span v-if="loading" class="mini-spinner"></span>
+            {{ dynamicButtonText }}
+          </button>
+
+          <div class="hint">{{ subMessage }}</div>
+
+          <div class="map-section" v-if="liffReady && authState === 'logged_in'">
+            <div class="map-head">
+              <div>
+                <h2>📍 ตำแหน่งของคุณ</h2>
+                <p>แสดงพื้นที่ที่ยอมรับเช็กอิน (สีน้ำเงิน) และตำแหน่งปัจจุบัน</p>
+              </div>
+              <span class="map-badge">Live Map</span>
+            </div>
+            <div class="map-wrap">
+              <div ref="mapEl" class="map"></div>
+            </div>
+            <div class="map-foot">
+              ✓ อยู่ในพื้นที่ = เช็กอินได้ | ✗ อยู่นอกพื้นที่ = ไม่สามารถเช็กอินได้
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="../assets/common.js"></script>
 
     <script src="../assets/page-scripts/user-checkin.js"></script>
   </body>

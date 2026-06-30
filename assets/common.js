@@ -3,7 +3,7 @@
   const PENDING_KEY = "pending_checkin_payload";
   const LAST_CHECKIN_KEY = "last_checkin";
   const AREA_CACHE_KEY = "checkin_area_cache";
-  const API_URL = "https://script.google.com/macros/s/AKfycbwk6O5tIIlKbgeu1HFa7PacVzENdhcfr87lV_DMxfC_uAcKDHYnKphIc8dM6ziMJXrm/exec";
+  const API_URL = "https://script.google.com/macros/s/AKfycbxUZE37YDlwluFxuzycJr4FOaKzC8MpXtlsJMfN0EPQ_p0PgwuZKQm1eDP392QIilBh/exec";
   const LIFF_ID = "2008594376-aBuTJTic";
 
   const DEFAULT_AREA = {
@@ -380,10 +380,16 @@
   // ⚠️ ตรวจสอบขอบเขตแบบเข้มงวด ไม่มีการอนุโลมระยะทางใดๆ ทั้งสิ้น (ห้ามบวกเพิ่มบัฟเฟอร์ เช่น +5.5 เมตร หรือใช้ accuracy มาขยายขอบเขตเด็ดขาด)
   // ผู้ใช้ต้องอยู่ในกรอบสี่เหลี่ยมจริงเท่านั้นถึงจะเช็กอินผ่าน ฝั่ง server (Code.gs validateGeofence) ก็ใช้กฎเดียวกันนี้
   function isInsideBoundary(lat, lng, boundary) {
-    return lat >= boundary.minLat &&
-      lat <= boundary.maxLat &&
-      lng >= boundary.minLng &&
-      lng <= boundary.maxLng;
+    // ⚠️ ตรวจสอบขอบเขตแบบเข้มงวดที่สุด (Strict Boundary)
+    // ตัดบัฟเฟอร์ออกทั้งหมด เพื่อให้มั่นใจว่าผู้ใช้ต้องอยู่ในกรอบจริง
+    if (!boundary || !lat || !lng) return false;
+    
+    const isInside = lat >= boundary.minLat &&
+                    lat <= boundary.maxLat &&
+                    lng >= boundary.minLng &&
+                    lng <= boundary.maxLng;
+                    
+    return isInside;
   }
 
   function formatNumber(value, digits = 6) {
