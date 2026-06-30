@@ -470,20 +470,12 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
             savingName.value = true;
             error.value = "";
 
-            // #region agent log
-            fetch('http://127.0.0.1:7651/ingest/5e86c977-c900-466f-905f-8c2e11144e1c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5e6f95'},body:JSON.stringify({sessionId:'5e6f95',location:'logs.js:saveName:before',message:'saveName request',data:{userId:String(log.userId||''),email:String(log.email||''),newName:editingName.value.trim()},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
-            // #endregion
-
             try {
               const result = await common.saveLogName({
                 userId: log.userId || "",
                 email: log.email || "",
                 displayName: editingName.value.trim(),
               }, 15000);
-
-              // #region agent log
-              fetch('http://127.0.0.1:7651/ingest/5e86c977-c900-466f-905f-8c2e11144e1c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5e6f95'},body:JSON.stringify({sessionId:'5e6f95',location:'logs.js:saveName:after',message:'saveName response',data:{ok:result?.ok,updatedCount:result?.updatedCount,err:String(result?.err||result?.error||result?.message||'')},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
-              // #endregion
 
               if (result && result.ok) {
                 const matchUserId = String(log.userId || "").trim();

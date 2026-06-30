@@ -31,7 +31,7 @@ const LEGACY_LOG_HEADER_RENAME = {
 /**
  * ตรวจและแก้ไขหัวคอลัมน์ของชีต Logs ให้ตรงกับ LOG_HEADERS เสมอ
  * - ถ้าเจอหัวคอลัมน์เก่า (Name/Email/Phone/Lat/Lng/Time) จะเปลี่ยนชื่อหัวให้ตรง schema ใหม่ทันที (ข้อมูลแถวเดิมไม่เสีย เพราะคอลัมน์ตำแหน่งเดิม)
- * - คอลัมน์ใหม่ที่ขาดไปจาก schema เดิม (เช่น createdAt ถ้าไม่เคยมี, userId, site, session, accuracy, pictureUrl, status)
+ * - คอลัมน์ใหม่ที่ขาดไปจาก schema ปัจจุบัน (เช่น createdAt, userId, site, status)
  *   จะถูกเพิ่มเป็นคอลัมน์ใหม่ต่อท้าย โดยไม่ลบหรือแก้ข้อมูลแถวที่มีอยู่แล้วเลย
  * - ฟังก์ชันนี้ปลอดภัยที่จะเรียกซ้ำได้ทุกครั้ง (idempotent)
  */
@@ -347,14 +347,14 @@ function saveLocation(payload) {
     let val = payload[h] !== undefined ? payload[h] : "";
 
     // Map ค่าจาก payload ไปยัง column ที่ตรงกับ Google Sheet
-    if (h === "qr_code") val = newId;
+    if (h === "qr_code") val = newId || payload.qr_code || payload.areaId || "";
     if (h === "lat") val = payload.lat || payload.centerLat || "";
     if (h === "lng") val = payload.lng || payload.centerLng || "";
     if (h === "north") val = payload.north || payload.northMeters || "";
     if (h === "south") val = payload.south || payload.southMeters || "";
     if (h === "east") val = payload.east || payload.eastMeters || "";
     if (h === "west") val = payload.west || payload.westMeters || "";
-    if (h === "remark") val = payload.remark || payload.note || payload.areaName || "";
+    if (h === "remark") val = payload.areaName || payload.remark || payload.note || "";
     if (h === "assign") val = payload.assign || payload.visibleRoles || "";
     if (h === "email") val = payload.email || payload.visibleUsers || "";
 
@@ -776,6 +776,65 @@ function logRowMatchesUser(rowUserId, rowEmail, targetUserId, targetEmail) {
   return false;
 }
 
+function formatBangkokDateTime(date) {
+  const d = date instanceof Date && !isNaN(date.getTime()) ? date : new Date();
+  return Utilities.formatDate(d, BANGKOK_TZ, "yyyy/MM/dd HH:mm:ss");
+}
+
+function parseLogDate(value) {
+  if (value === null || value === undefined || value === "") return null;
+  if (value instanceof Date && !isNaN(value.getTime())) return value;
+
+  const text = String(value).trim();
+  if (!text) return null;
+
+  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(text) || text.indexOf("T") > -1) {
+    const isoDate = new Date(text);
+    if (!isNaN(isoDate.getTime())) return isoDate;
+  }
+
+  const match = text.match(
+    /^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/,
+  );
+  if (match) {
+    const y = match[1];
+    const m = String(match[2]).padStart(2, "0");
+    const d = String(match[3]).padStart(2, "0");
+    const hh = String(match[4] || 0).padStart(2, "0");
+    const mm = String(match[5] || 0).padStart(2, "0");
+    const ss = String(match[6] || 0).padStart(2, "0");
+    const bangkokIso = y + "-" + m + "-" + d + "T" + hh + ":" + mm + ":" + ss + "+07:00";
+    const parsed = new Date(bangkokIso);
+    if (!isNaN(parsed.getTime())) return parsed;
+  }
+
+  const fallback = new Date(text);
+  return isNaN(fallback.getTime()) ? null : fallback;
+}
+
+function buildLineCheckinUserMap() {
+  ensureLineCheckinUserSheet();
+  const users = getSheetDataAsObjects(LINE_CHECKIN_USER_SHEET);
+  const byUserId = {};
+  for (let i = 0; i < users.length; i++) {
+    const uid = String(users[i].userId || "").trim();
+    if (uid) byUserId[uid] = users[i];
+  }
+  return byUserId;
+}
+
+function enrichLogsWithUserNames(logs) {
+  const byUserId = buildLineCheckinUserMap();
+  return (logs || []).map(function (log) {
+    const uid = String(log.userId || "").trim();
+    if (uid && byUserId[uid]) {
+      const resolved = resolveLogDisplayName(log, byUserId[uid]);
+      if (resolved) log.displayName = resolved;
+    }
+    return log;
+  });
+}
+
 /**
  * =======================================================================
  * LOGS MODULE
@@ -784,7 +843,7 @@ function logRowMatchesUser(rowUserId, rowEmail, targetUserId, targetEmail) {
 
 function handleGetLogs(params) {
   ensureLogsSheetSchema();
-  let data = getSheetDataAsObjects(LOGS_SHEET_NAME);
+  let data = enrichLogsWithUserNames(getSheetDataAsObjects(LOGS_SHEET_NAME));
 
   // กรองตาม userId หรือ email สำหรับการค้นหาชื่อ
   if (params.userId) {
@@ -808,16 +867,17 @@ function handleGetLogs(params) {
     const fromDate = params.from ? new Date(params.from + 'T00:00:00.000+07:00') : null;
     const toDate = params.to ? new Date(params.to + 'T23:59:59.999+07:00') : null;
 
-    data = data.filter(log => {
-      const logDate = new Date(log.createdAt);
+    data = data.filter(function (log) {
+      const logDate = parseLogDate(log.createdAt);
+      if (!logDate) return false;
       return (!fromDate || logDate >= fromDate) && (!toDate || logDate <= toDate);
     });
   }
 
   // เรียงลำดับจากใหม่ไปเก่า (descending by createdAt)
-  data.sort((a, b) => {
-    const timeA = new Date(a.createdAt || 0).getTime();
-    const timeB = new Date(b.createdAt || 0).getTime();
+  data.sort(function (a, b) {
+    const timeA = (parseLogDate(a.createdAt) || new Date(0)).getTime();
+    const timeB = (parseLogDate(b.createdAt) || new Date(0)).getTime();
     return timeB - timeA;
   });
 
@@ -930,43 +990,31 @@ function saveLog(payload) {
   }
   // -------------------------------------------
 
-  const lineUser =
-    ensureLineCheckinUser(payload) ||
-    getLineCheckinUserByUserId(payload.userId);
-  const resolvedDisplayName = resolveLogDisplayName(payload, lineUser);
   const resolvedUserId = String(payload.userId || "").trim();
+  if (resolvedUserId) {
+    ensureLineCheckinUser(payload);
+  }
+  const lineUser = resolvedUserId ? getLineCheckinUserByUserId(resolvedUserId) : null;
+  const resolvedDisplayName = resolveLogDisplayName(payload, lineUser);
+  const createdAtBangkok = formatBangkokDateTime(
+    payload.time ? parseLogDate(payload.time) || new Date() : new Date(),
+  );
 
   const sheet = ensureLogsSheetSchema();
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
 
-  // แปลงเวลาปัจจุบันเป็นเวลาไทย (UTC+7) ในรูปแบบ YYYY-MM-DD HH:mm:ss
-  function getThaiTime() {
-    const now = payload.time ? new Date(payload.time) : new Date();
-    const offset = 7 * 60; // UTC+7 in minutes
-    const localMs = now.getTime() + (offset - now.getTimezoneOffset()) * 60000;
-    const d = new Date(localMs);
-    const pad = (n) => String(n).padStart(2, "0");
-    return (
-      d.getUTCFullYear() + "-" +
-      pad(d.getUTCMonth() + 1) + "-" +
-      pad(d.getUTCDate()) + " " +
-      pad(d.getUTCHours()) + ":" +
-      pad(d.getUTCMinutes()) + ":" +
-      pad(d.getUTCSeconds())
-    );
-  }
-
   const rowData = headers.map(function (h) {
-    if (h === "createdAt") return getThaiTime();
+    if (h === "createdAt") return createdAtBangkok;
     if (h === "displayName") return resolvedDisplayName;
     if (h === "email") return payload.email || "";
+    if (h === "phone") return payload.phone || "";
     if (h === "site") return payload.site || "";
     if (h === "lat") return payload.lat || "";
     if (h === "lng") return payload.lng || "";
     if (h === "userId") return resolvedUserId;
     if (h === "status") return payload.status || "checked_in";
-    return payload[h] || "";
+    return "";
   });
 
   sheet.appendRow(rowData);

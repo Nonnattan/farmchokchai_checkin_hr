@@ -1,16 +1,15 @@
 (() => {
   const common = window.CheckinCommon || {};
-  const API_URL = common.API_URL || "https://script.google.com/macros/s/AKfycbz59URqJ-enQd6g0YHedQRTLO8IZxJAFfExKpGoRhO3Q2YAKWnouuO-CmCxNuwTQ-pE/exec";
   const DEFAULT_AREA = common.DEFAULT_AREA || {
-    areaId: "qr_code",
-    areaName: "qr_code",
+    areaId: "",
+    areaName: "พื้นที่ทั่วไป",
     lat: 13.968639,
     lng: 100.619861,
     north: 50,
     south: 50,
-    east: 80,
+    east: 50,
     west: 50,
-    remark: "พื้นที่เริ่มต้นสำหรับเช็กอิน",
+    remark: "เช็กอินภายในพื้นที่ที่กำหนด",
     assign: "masteradmin,admin",
     email: "",
     active: true,
@@ -87,7 +86,7 @@
     const remarkText = String(remarkSource || "").trim();
 
     const areaId = areaIdText || (allowBlankAreaId ? "" : `__legacy-no-id-${Date.now()}-${__legacyIdCounter++}`);
-    const areaName = areaNameText || (allowBlankAreaId ? "" : DEFAULT_AREA.areaName);
+    const areaName = areaNameText || (allowBlankAreaId ? "" : (DEFAULT_AREA.areaName === "qr_code" ? "" : DEFAULT_AREA.areaName));
 
     return {
       areaId,
@@ -147,15 +146,23 @@
   }
 
   function toPayloadArea(editing) {
+    const areaId = String(editing.areaId || "").trim();
     return {
-      areaId: String(editing.areaId || "").trim(),
+      areaId,
+      qr_code: areaId,
       areaName: String(editing.areaName || editing.remark || "").trim(),
       lat: Number(editing.lat),
       lng: Number(editing.lng),
+      centerLat: Number(editing.lat),
+      centerLng: Number(editing.lng),
       north: Number(editing.north),
       south: Number(editing.south),
       east: Number(editing.east),
       west: Number(editing.west),
+      northMeters: Number(editing.north),
+      southMeters: Number(editing.south),
+      eastMeters: Number(editing.east),
+      westMeters: Number(editing.west),
       remark: String(editing.remark || editing.areaName || "").trim(),
       assign: String(editing.assign || "").trim(),
       email: String(editing.email || "").trim(),
@@ -163,61 +170,6 @@
       visibleUsers: String(editing.email || "").trim(),
       active: editing.active !== false,
     };
-  }
-
-  function requestJson(action, payload = null, method = "GET", timeoutMs = 20000) {
-    const upper = String(method || "GET").toUpperCase();
-    let url = API_URL;
-    const options = {
-      method: upper,
-      cache: "no-store",
-    };
-
-    if (upper === "GET") {
-      const params = new URLSearchParams();
-      params.set("action", action);
-      params.set("_ts", String(Date.now()));
-      if (payload && typeof payload === "object") {
-        Object.entries(payload).forEach(([key, value]) => {
-          if (value === undefined || value === null || value === "") return;
-          params.set(key, String(value));
-        });
-      }
-      url = `${API_URL}?${params.toString()}`;
-    } else {
-      options.headers = { "Content-Type": "text/plain;charset=utf-8" };
-      options.body = JSON.stringify({ action, ...(payload || {}) });
-    }
-
-    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-    let timeoutId = null;
-
-    if (controller) {
-      options.signal = controller.signal;
-      if (Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0) {
-        timeoutId = setTimeout(() => controller.abort(), Number(timeoutMs));
-      }
-    }
-
-    return fetch(url, options)
-      .then(async (response) => {
-        const text = await response.text();
-        let data = {};
-        try {
-          data = JSON.parse(text);
-        } catch (e) {
-          throw new Error("Apps Script ตอบกลับไม่ใช่ JSON");
-        }
-
-        if (!response.ok || data.ok === false) {
-          throw new Error(data.err || data.error || data.message || "API request failed");
-        }
-
-        return data;
-      })
-      .finally(() => {
-        if (timeoutId) clearTimeout(timeoutId);
-      });
   }
 
   const app = Vue.createApp({
@@ -413,9 +365,8 @@
         this.loading = true;
         this.setStatus("loading", "กำลังโหลดพื้นที่", "ดึงข้อมูลพื้นที่จาก Google Sheet");
         try {
-          const data = await requestJson("location", null, "GET", 20000);
-          const list = Array.isArray(data?.data) ? data.data.map(normalizeArea) : [];
-          this.areas = list;
+          const list = await common.getAreas(20000, true);
+          this.areas = Array.isArray(list) ? list.map(normalizeArea) : [];
 
           const idToSelect = selectId || (skipAutoSelect ? "" : this.selectedId);
           if (idToSelect) {
@@ -496,9 +447,8 @@
         }
         this.loading = true;
         try {
-          const data = await requestJson("location", null, "GET", 20000);
-          const list = Array.isArray(data?.data) ? data.data.map(normalizeArea) : [];
-          this.areas = list;
+          const list = await common.getAreas(20000, true);
+          this.areas = Array.isArray(list) ? list.map(normalizeArea) : [];
           const found = this.areas.find((a) => a.areaId === this.selectedId);
           if (found) {
             this.draftMode = false;
@@ -543,8 +493,10 @@
               }
             }
             payload.areaId = candidate;
+            payload.qr_code = candidate;
           } else {
             payload.areaId = String(payload.areaId || "").trim() || String(this.selectedId || "").trim();
+            payload.qr_code = payload.areaId;
           }
 
           payload.email = selectedEmails.join(",");
@@ -560,7 +512,7 @@
             };
           });
 
-          const res = await requestJson("location", payload, "POST", 30000);
+          const res = await common.saveLocationEntry(payload, 30000);
           const saved = normalizeArea(res?.data?.[0] || payload);
           const savedId = String(saved.areaId || payload.areaId || "").trim();
 
@@ -606,12 +558,7 @@
 
         this.saving = true;
         try {
-          await requestJson(
-            "location",
-            { actionType: "delete", areaId: id, qr_code: id, originalAreaId: this.selectedId },
-            "POST",
-            20000,
-          );
+          await common.deleteLocationEntry(id, 20000);
           await this.loadAreas(null, { skipAutoSelect: true });
           this.newArea();
           this.setStatus("success", "ลบแล้ว", `ลบพื้นที่ ${id} ออกจาก Sheet แล้ว`);

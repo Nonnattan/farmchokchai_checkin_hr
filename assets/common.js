@@ -3,19 +3,19 @@
   const PENDING_KEY = "pending_checkin_payload";
   const LAST_CHECKIN_KEY = "last_checkin";
   const AREA_CACHE_KEY = "checkin_area_cache";
-  const API_URL = "https://script.google.com/macros/s/AKfycbxHxMALfPdYVin9CSSU2uubu8Ex2EeqjVfGBMcWeCYq8-0VkvvOwfxZfbtaCIt07Jk3/exec";
+  const API_URL = "https://script.google.com/macros/s/AKfycbwk6O5tIIlKbgeu1HFa7PacVzENdhcfr87lV_DMxfC_uAcKDHYnKphIc8dM6ziMJXrm/exec";
   const LIFF_ID = "2008594376-aBuTJTic";
 
   const DEFAULT_AREA = {
-    areaId: "qr_code",
-    areaName: "qr_code",
+    areaId: "",
+    areaName: "ยังไม่ได้เลือกพื้นที่",
     centerLat: 13.968639,
     centerLng: 100.619861,
     northMeters: 50,
     southMeters: 50,
-    eastMeters: 80,
+    eastMeters: 50,
     westMeters: 50,
-    note: "อยู่ในกรอบสี่เหลี่ยมนี้เท่านั้นจึงจะเช็กอินได้",
+    note: "กรุณาสแกน QR Code ของพื้นที่ที่ต้องการเช็กอิน",
     active: true,
     visibleRoles: "masteradmin,admin,user",
     visibleUsers: "",
@@ -78,8 +78,8 @@
     );
     const areaId = hasRealId
       ? String(
-        source.qr_code ||
         source.areaId ||
+        source.qr_code ||
         source.id ||
         source.code ||
         source.siteId ||
@@ -210,13 +210,60 @@
     }
   }
 
+  function invalidateAreaCache() {
+    try {
+      localStorage.removeItem(getAreaCacheKey());
+    } catch (e) { }
+  }
+
+  async function saveLocationEntry(payload, timeoutMs = 30000) {
+    const data = await requestJson("location", payload || {}, "POST", timeoutMs);
+    invalidateAreaCache();
+    await getAreas(timeoutMs, true);
+    return data;
+  }
+
+  async function deleteLocationEntry(areaId, timeoutMs = 20000) {
+    const id = String(areaId || "").trim();
+    const data = await requestJson(
+      "location",
+      { actionType: "delete", areaId: id, qr_code: id, originalAreaId: id },
+      "POST",
+      timeoutMs,
+    );
+    invalidateAreaCache();
+    await getAreas(timeoutMs, true);
+    return data;
+  }
+
+  function findAreaById(list, areaId) {
+    const id = String(areaId || "").trim();
+    if (!id) return null;
+    return (list || []).find(
+      (a) =>
+        String(a.areaId || "").trim() === id ||
+        String(a.qr_code || "").trim() === id,
+    ) || null;
+  }
+
+  function areaDisplayMetrics(area) {
+    const src = area || {};
+    return {
+      centerLat: src.centerLat ?? src.lat,
+      centerLng: src.centerLng ?? src.lng,
+      northMeters: src.northMeters ?? src.north,
+      southMeters: src.southMeters ?? src.south,
+      eastMeters: src.eastMeters ?? src.east,
+      westMeters: src.westMeters ?? src.west,
+    };
+  }
+
   async function getArea(areaId, timeoutMs = 15000) {
     const list = await getAreas(timeoutMs);
     const id = String(areaId || "").trim();
     if (!id) return list[0] || normalizeArea(DEFAULT_AREA);
 
-    // พยายามหาพื้นที่ที่ตรงกับ ID ที่ส่งมา (รองรับทั้ง areaId และ qr_code)
-    const found = list.find((a) => String(a.areaId).trim() === id || String(a.qr_code).trim() === id);
+    const found = findAreaById(list, id);
     return found || list[0] || normalizeArea(DEFAULT_AREA);
   }
 
@@ -279,13 +326,7 @@
   }
 
   async function addLog(entry, timeoutMs = 30000) {
-    // #region agent log
-    fetch('http://127.0.0.1:7651/ingest/5e86c977-c900-466f-905f-8c2e11144e1c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5e6f95'},body:JSON.stringify({sessionId:'5e6f95',location:'common.js:addLog',message:'addLog payload',data:{userId:String(entry?.userId||''),email:String(entry?.email||''),displayName:String(entry?.displayName||entry?.name||'')},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion
     const result = await requestJson("logs", entry || {}, "POST", timeoutMs);
-    // #region agent log
-    fetch('http://127.0.0.1:7651/ingest/5e86c977-c900-466f-905f-8c2e11144e1c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5e6f95'},body:JSON.stringify({sessionId:'5e6f95',location:'common.js:addLog:result',message:'addLog response',data:{ok:result?.ok,userId:String(result?.userId||''),displayName:String(result?.displayName||''),err:String(result?.err||result?.error||'')},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion
     return result;
   }
 
@@ -361,11 +402,16 @@
       day: "2-digit",
       hour: "2-digit",
       minute: "2-digit",
+      second: "2-digit",
       hour12: false,
     };
     const parts = new Intl.DateTimeFormat("en-GB", options).formatToParts(date);
     const get = (type) => parts.find((p) => p.type === type)?.value || "";
-    return `${get("year")}/${get("month")}/${get("day")} ${get("hour")}:${get("minute")}`;
+    return `${get("year")}/${get("month")}/${get("day")} ${get("hour")}:${get("minute")}:${get("second") || "00"}`;
+  }
+
+  function formatBangkokNow() {
+    return formatDate(new Date());
   }
 
   function getVisibleAreas(areas, role, uid, email) {
@@ -729,6 +775,11 @@
     getNavItems,
     getArea,
     saveArea,
+    saveLocationEntry,
+    deleteLocationEntry,
+    invalidateAreaCache,
+    findAreaById,
+    areaDisplayMetrics,
     deleteArea,
     resetData,
     setPendingCheckin,
@@ -747,6 +798,7 @@
     buildBoundary,
     isInsideBoundary,
     formatDate,
+    formatBangkokNow,
     formatNumber,
     parseBangkokDateTime,
     getVisibleAreas,

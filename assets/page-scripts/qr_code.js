@@ -4,7 +4,7 @@ createApp({
   setup() {
     const session = ref(null);
     const areas = ref([]);
-    const selectedId = ref("default");
+    const selectedId = ref("");
     const qrEl = ref(null);
     const qrUrl = ref("");
     const token = ref("");
@@ -13,7 +13,37 @@ createApp({
     const statusDesc = ref("กำลังอ่าน role และพื้นที่");
     const loading = ref(false);
 
-    const selectedArea = computed(() => areas.value.find((a) => a.areaId === selectedId.value) || areas.value[0] || common.DEFAULT_AREA);
+    const selectedArea = computed(() => {
+      const id = String(selectedId.value || "").trim();
+      if (id) {
+        const matched = common.findAreaById
+          ? common.findAreaById(areas.value, id)
+          : areas.value.find((a) => a.areaId === id || a.qr_code === id);
+        if (matched) return matched;
+      }
+      
+      // ถ้ามี areaId ใน URL แต่หาไม่เจอในลิสต์ (อาจจะเพราะเพิ่งบันทึกแล้ว cache ยังไม่อัปเดต)
+      // ให้พยายามหาจากลิสต์ทั้งหมดอีกรอบก่อนจะ fallback
+      const urlAreaId = new URLSearchParams(location.search).get("areaId");
+      if (urlAreaId && !id) return null;
+
+      return areas.value[0] || null;
+    });
+
+    const displayMetrics = computed(() => {
+      const area = selectedArea.value;
+      if (!area) return common.areaDisplayMetrics(common.DEFAULT_AREA);
+      return common.areaDisplayMetrics
+        ? common.areaDisplayMetrics(area)
+        : {
+            centerLat: area.centerLat ?? area.lat,
+            centerLng: area.centerLng ?? area.lng,
+            northMeters: area.northMeters ?? area.north,
+            southMeters: area.southMeters ?? area.south,
+            eastMeters: area.eastMeters ?? area.east,
+            westMeters: area.westMeters ?? area.west,
+          };
+    });
     const navItems = computed(() => common.getNavItems(session.value?.role, "qr_code"));
     const showLogout = computed(() => {
       const r = String(session.value?.role || "").toLowerCase();
@@ -39,9 +69,13 @@ createApp({
 
     function buildQR() {
       if (!qrEl.value || !window.QRCode) return;
-      qrEl.value.innerHTML = "";
       const area = selectedArea.value;
-      const url = `${location.origin}${location.pathname.replace(/[^/]*$/, "")}user/checkin.html?areaId=${encodeURIComponent(area.areaId)}&site=${encodeURIComponent(area.areaName)}`;
+      if (!area) {
+        setStatus("error", "ยังไม่มีพื้นที่", "กรุณาตั้งค่าพื้นที่ในหน้า SetArea ก่อน");
+        return;
+      }
+      qrEl.value.innerHTML = "";
+      const url = `${location.origin}${location.pathname.replace(/[^/]*$/, "")}user/checkin.html?areaId=${encodeURIComponent(area.areaId || area.qr_code || "")}&site=${encodeURIComponent(area.areaName || area.remark || "")}`;
       const t = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).replace(/-/g, "").slice(0, 10).toUpperCase();
       token.value = t;
       qrUrl.value = url;
@@ -76,38 +110,60 @@ createApp({
           return;
         }
         session.value = sessionInfo;
-        const raw = await common.getAreas();
-        const visible = common.getVisibleAreas(raw, sessionInfo.role, sessionInfo.user.uid, sessionInfo.user.email);
-        areas.value = visible.length ? visible : raw;
-        if (!areas.value.length) areas.value = [common.DEFAULT_AREA];
 
-        // กำหนดพื้นที่ที่จะแสดง: ตามลำดับความสำคัญดังนี้
-        // 1) areaId จาก URL (เช่น มาจากปุ่ม "ดู QR" ของหน้า admin/setarea) — มีสิทธิ์สูงสุดเสมอ
-        // 2) ถ้า preserveSelection และมี selectedId อยู่แล้ว (เช่นมาจากการกด "รีเฟรชพื้นที่") ให้คงไว้
-        // 3) พื้นที่แรกในลิสต์
+        if (typeof common.invalidateAreaCache === "function") {
+          common.invalidateAreaCache();
+        }
+        const raw = await common.getAreas(15000, true);
+        const uid = sessionInfo.user?.uid || sessionInfo.uid || "";
+        const email = sessionInfo.user?.email || sessionInfo.email || "";
+        const visible = common.getVisibleAreas(raw, sessionInfo.role, uid, email);
         const urlAreaId = new URLSearchParams(location.search).get("areaId");
+        const urlArea = urlAreaId && common.findAreaById
+          ? common.findAreaById(raw, urlAreaId)
+          : raw.find(
+              (a) =>
+                String(a.areaId || "").trim() === String(urlAreaId || "").trim() ||
+                String(a.qr_code || "").trim() === String(urlAreaId || "").trim(),
+            );
 
-        let nextSelectedId = "";
-        if (urlAreaId) {
-          const foundByUrl = areas.value.find(
-            (a) =>
-              String(a.areaId).trim() === String(urlAreaId).trim() ||
-              String(a.qr_code).trim() === String(urlAreaId).trim()
+        let nextAreas = visible.length ? visible : raw;
+        if (urlArea) {
+          const alreadyListed = nextAreas.some(
+            (a) => String(a.areaId || "").trim() === String(urlArea.areaId || "").trim(),
           );
-          if (foundByUrl) {
-            nextSelectedId = foundByUrl.areaId;
-          } else {
-            setStatus("error", "ไม่พบพื้นที่ตามลิงก์ที่ระบุ", `areaId "${urlAreaId}" ไม่อยู่ในรายการที่คุณมีสิทธิ์เห็น ใช้พื้นที่แรกแทน`);
+          if (!alreadyListed) {
+            nextAreas = [urlArea, ...nextAreas];
           }
         }
+        areas.value = nextAreas;
 
-        if (!nextSelectedId && preserveSelection) {
-          const stillExists = areas.value.find((a) => a.areaId === selectedId.value);
+        let nextSelectedId = "";
+        if (urlArea) {
+          nextSelectedId = urlArea.areaId || urlArea.qr_code || "";
+        } else if (preserveSelection && selectedId.value) {
+          const stillExists = common.findAreaById
+            ? common.findAreaById(areas.value, selectedId.value)
+            : areas.value.find((a) => a.areaId === selectedId.value);
           if (stillExists) nextSelectedId = stillExists.areaId;
         }
 
-        if (!nextSelectedId) {
-          nextSelectedId = areas.value[0].areaId;
+        if (!nextSelectedId && areas.value.length) {
+          nextSelectedId = areas.value[0].areaId || areas.value[0].qr_code || "";
+        }
+
+        if (!areas.value.length) {
+          setStatus("error", "ยังไม่มีพื้นที่", "กรุณาบันทึกพื้นที่ในหน้า SetArea ก่อน");
+          selectedId.value = "";
+          return;
+        }
+
+        if (urlAreaId && !urlArea) {
+          setStatus(
+            "error",
+            "ไม่พบพื้นที่ตามลิงก์",
+            `areaId "${urlAreaId}" ไม่มีใน Google Sheet — ลองรีเฟรชหรือบันทึกพื้นที่ใน SetArea อีกครั้ง`,
+          );
         }
 
         selectedId.value = nextSelectedId;
@@ -115,7 +171,7 @@ createApp({
         await nextTick();
         buildQR();
         if (statusType.value !== "error") {
-          setStatus("success", "QR พร้อมใช้งาน", "สแกนเพื่อเปิดหน้าผู้ใช้ตามพื้นที่ที่เลือก");
+          setStatus("success", "QR พร้อมใช้งาน", `พื้นที่: ${selectedArea.value?.areaName || selectedArea.value?.remark || nextSelectedId}`);
         }
       } catch (err) {
         setStatus("error", "โหลดไม่สำเร็จ", err?.message || "ลองใหม่อีกครั้ง");
@@ -137,6 +193,7 @@ createApp({
       areas,
       selectedId,
       selectedArea,
+      displayMetrics,
       navItems,
       qrEl,
       qrUrl,
@@ -189,12 +246,12 @@ createApp({
           </div>
 
           <div class="grid">
-            <div class="span-6 field"><label>Center Lat</label><div class="code">{{ common.formatNumber(selectedArea.centerLat) }}</div></div>
-            <div class="span-6 field"><label>Center Lng</label><div class="code">{{ common.formatNumber(selectedArea.centerLng) }}</div></div>
-            <div class="span-3 field"><label>North</label><div class="code">{{ selectedArea.northMeters }}</div></div>
-            <div class="span-3 field"><label>South</label><div class="code">{{ selectedArea.southMeters }}</div></div>
-            <div class="span-3 field"><label>East</label><div class="code">{{ selectedArea.eastMeters }}</div></div>
-            <div class="span-3 field"><label>West</label><div class="code">{{ selectedArea.westMeters }}</div></div>
+            <div class="span-6 field"><label>Center Lat</label><div class="code">{{ common.formatNumber(displayMetrics.centerLat) }}</div></div>
+            <div class="span-6 field"><label>Center Lng</label><div class="code">{{ common.formatNumber(displayMetrics.centerLng) }}</div></div>
+            <div class="span-3 field"><label>North</label><div class="code">{{ displayMetrics.northMeters }}</div></div>
+            <div class="span-3 field"><label>South</label><div class="code">{{ displayMetrics.southMeters }}</div></div>
+            <div class="span-3 field"><label>East</label><div class="code">{{ displayMetrics.eastMeters }}</div></div>
+            <div class="span-3 field"><label>West</label><div class="code">{{ displayMetrics.westMeters }}</div></div>
           </div>
 
           <div class="actions">

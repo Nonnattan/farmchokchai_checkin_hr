@@ -146,8 +146,8 @@ createApp({
           return;
         }
 
-        const raw = await common.getAreas();
-        const visible = common.getVisibleAreas(raw, info.role, info.user.uid, info.user.email);
+        const raw = await common.getAreas(15000, true);
+        const visible = common.getVisibleAreas(raw, info.role, info.user?.uid || info.uid, info.user?.email || info.email);
 
         areas.value = visible;
         selectedId.value = areas.value[0]?.areaId || "";

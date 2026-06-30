@@ -180,9 +180,8 @@ window.addEventListener("pageshow", (event) => {
               lat,
               lng,
               accuracy,
-              time: new Date().toISOString(),
+              time: common.formatBangkokNow ? common.formatBangkokNow() : new Date().toISOString(),
               userId: profile.value?.userId || "",
-              pictureUrl: profile.value?.pictureUrl || "",
             };
           }
 
