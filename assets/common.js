@@ -203,11 +203,25 @@
       cacheAreas(list);
       return list;
     } catch (e) {
-      // ถ้า bypassCache = true ให้ใช้ default area แทนที่จะใช้ cache เก่า
-      if (bypassCache) {
-        return [normalizeArea(DEFAULT_AREA)];
+      // ⚠️ BUGFIX (check-in ไม่ผ่านทั้งที่อยู่ในพื้นที่จริง):
+      // เดิมโค้ดตรงนี้ ถ้า bypassCache=true แล้วโหลดจากเซิร์ฟเวอร์ไม่สำเร็จ (เช่น เน็ตมือถือหลุด/
+      // Apps Script ตอบช้า/timeout) จะคืนค่า [normalizeArea(DEFAULT_AREA)] ซึ่งเป็นพิกัด "ตัวอย่าง"
+      // ที่ฝังไว้ใน common.js เอง (ไม่ใช่พิกัดพื้นที่จริงที่ Admin ตั้งค่าไว้) — คลาดกันได้เป็นร้อยเมตร
+      // ผลคือ user มือถือที่ยืนอยู่ในพื้นที่จริงแท้ๆ จะถูกเช็คระยะทางกับพิกัด "หลอก" นี้แทน ทำให้
+      // เช็คอินไม่ผ่านโดยไม่มีใครรู้สาเหตุ (ปัญหานี้ไม่ค่อยเกิดบนคอมของ Admin เพราะเน็ต/แคชเสถียรกว่า)
+      // แก้โดย: ลองใช้ค่าที่แคชไว้ก่อนเสมอ (ไม่สนใจ bypassCache ตอน error) และถ้าไม่มีแคชเลยจริงๆ
+      // ให้ throw error ต่อ เพื่อให้หน้าจอ (loadConfig ฝั่ง user-checkin.js) แสดงข้อความ "โหลดไม่สำเร็จ"
+      // แทนที่จะเงียบๆ แล้วเอาพิกัดผิดไปคำนวณระยะทาง
+      console.error("[CheckinCommon] getAreas: โหลดพื้นที่จากเซิร์ฟเวอร์ไม่สำเร็จ", e);
+      const cached = normalizeAreaList(readCachedAreas());
+      if (cached.length) {
+        console.warn("[CheckinCommon] getAreas: ใช้ข้อมูลพื้นที่จากแคชแทน (" + cached.length + " รายการ)");
+        return cached;
       }
-      return normalizeAreaList(readCachedAreas());
+      if (bypassCache) {
+        throw e;
+      }
+      return cached; // []
     }
   }
 
@@ -354,6 +368,21 @@
       : (Array.isArray(data.data) ? data.data : []);
   }
 
+  // สูตร Haversine คำนวณระยะทางจริงระหว่าง 2 พิกัด (หน่วยเมตร)
+  // ใช้ร่วมกันทั้งหน้า user-checkin (แสดงระยะห่างให้ user เห็น/debug) และที่อื่นๆ ที่ต้องการระยะทาง
+  // เพื่อไม่ให้สูตรคำนวณระยะทางกระจัดกระจายหลายที่แล้วมีค่าไม่ตรงกัน (ต้นเหตุหนึ่งของบั๊กระยะทางคลาดเคลื่อน)
+  function calculateDistanceMeters(lat1, lng1, lat2, lng2) {
+    const R = 6371000;
+    const toRad = (deg) => (Number(deg) * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
   function metersToLatDelta(meters) { return meters / 111320; }
   function metersToLngDelta(meters, lat) {
     const safeLat = Number(lat) || 0;
@@ -391,7 +420,27 @@
                     lat <= (boundary.maxLat + tolerance) &&
                     lng >= (boundary.minLng - tolerance) &&
                     lng <= (boundary.maxLng + tolerance);
-                    
+
+    // Debug log: ไว้ตรวจสอบตอนมีปัญหาเช็คอินไม่ผ่านทั้งที่อยู่ในพื้นที่จริง
+    // (แสดง lat/lng ที่อ่านได้, ขอบเขต/รัศมีของพื้นที่ และระยะห่างจากจุดศูนย์กลาง)
+    try {
+      const distanceFromCenter =
+        Number.isFinite(Number(boundary.centerLat)) && Number.isFinite(Number(boundary.centerLng))
+          ? calculateDistanceMeters(lat, lng, boundary.centerLat, boundary.centerLng)
+          : null;
+      console.log("[CheckinCommon] isInsideBoundary debug:", {
+        lat, lng,
+        boundary: {
+          minLat: boundary.minLat, maxLat: boundary.maxLat,
+          minLng: boundary.minLng, maxLng: boundary.maxLng,
+          centerLat: boundary.centerLat, centerLng: boundary.centerLng,
+        },
+        distanceFromCenterMeters: distanceFromCenter,
+        toleranceMeters: 2,
+        isInside,
+      });
+    } catch (e) { /* อย่าให้ log พัง flow การเช็คอินจริง */ }
+
     return isInside;
   }
 
@@ -806,6 +855,7 @@
     getRoleLabel,
     buildBoundary,
     isInsideBoundary,
+    calculateDistanceMeters,
     formatDate,
     formatBangkokNow,
     formatNumber,

@@ -248,6 +248,16 @@ function responseJson(data) {
 // (ซึ่งเกิดขึ้นได้ง่ายเวลาทำตามขั้นตอน "วางทับใน Apps Script Editor" ในเอกสาร)
 // getActiveSpreadsheet() อาจหาไม่เจอหรือชี้ไปคนละไฟล์ ทำให้ข้อมูลเช็คอินไม่ถูกเขียนลง
 // Google Sheet ที่ผู้ใช้เปิดดูอยู่จริง ใช้ openById(SPREADSHEET_ID) จึงชัดเจนและเชื่อถือได้กว่า
+
+// ⚠️ BUGFIX: ฟังก์ชันช่วยแปลงค่าตัวเลขแบบปลอดภัย ใช้แทน `value || fallback` ทุกจุดที่อ่าน/เขียน
+// lat, lng, north/south/east/west, maxAccuracy, accuracy — เพราะ `value || fallback` จะถือว่า 0
+// เป็นค่า falsy แล้วเปลี่ยนไปใช้ fallback แทนโดยไม่ตั้งใจ (เช่น ถ้า Admin ตั้งขอบเขตทิศใดทิศหนึ่ง = 0
+// เมตรพอดี ค่าจะถูกเขียนเป็นค่าว่างแล้วอ่านกลับมาเป็นค่า default แทน ทำให้ขอบเขตพื้นที่จริงคลาดเคลื่อน)
+function numOr(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function getSheetByNameOrCreate(sheetName) {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   let sheet = ss.getSheetByName(sheetName);
@@ -283,6 +293,11 @@ function getSheetDataAsObjects(sheetName) {
  */
 
 function handleGetLocation() {
+  // BUGFIX: เดิมฟังก์ชันนี้อ่านชีตตรงๆ โดยไม่เรียก ensureLocationSheetSchema() ก่อน
+  // ถ้าพื้นที่แถวเก่าถูกสร้างไว้ก่อนที่ระบบจะมีคอลัมน์ maxAccuracy คอลัมน์นี้จะไม่มีอยู่เลย
+  // (ไม่ใช่แค่ค่าว่าง) ทำให้ maxAccuracy เป็น undefined เสมอจนกว่าจะมีการกด "บันทึก" พื้นที่นั้นซ้ำ
+  // เรียกฟังก์ชันนี้ก่อนอ่านทุกครั้งจะเพิ่มคอลัมน์ที่ขาดให้อัตโนมัติ (ปลอดภัย ไม่กระทบข้อมูลเดิม)
+  ensureLocationSheetSchema();
   const rawData = getSheetDataAsObjects("location");
   // แมปข้อมูลให้มี areaId และ areaName เสมอ เพื่อให้ frontend ใช้งานง่าย
   const data = rawData.map(row => {
@@ -410,16 +425,16 @@ function saveLocation(payload) {
 
     // Map ค่าจาก payload ไปยัง column ที่ตรงกับ Google Sheet
     if (h === "qr_code") val = newId || payload.qr_code || payload.areaId || "";
-    if (h === "lat") val = payload.lat || payload.centerLat || "";
-    if (h === "lng") val = payload.lng || payload.centerLng || "";
-    if (h === "north") val = payload.north || payload.northMeters || "";
-    if (h === "south") val = payload.south || payload.southMeters || "";
-    if (h === "east") val = payload.east || payload.eastMeters || "";
-    if (h === "west") val = payload.west || payload.westMeters || "";
+    if (h === "lat") val = numOr(payload.lat, numOr(payload.centerLat, ""));
+    if (h === "lng") val = numOr(payload.lng, numOr(payload.centerLng, ""));
+    if (h === "north") val = numOr(payload.north, numOr(payload.northMeters, ""));
+    if (h === "south") val = numOr(payload.south, numOr(payload.southMeters, ""));
+    if (h === "east") val = numOr(payload.east, numOr(payload.eastMeters, ""));
+    if (h === "west") val = numOr(payload.west, numOr(payload.westMeters, ""));
     if (h === "remark") val = payload.areaName || payload.remark || payload.note || "";
     if (h === "assign") val = payload.assign || payload.visibleRoles || "";
     if (h === "email") val = payload.email || payload.visibleUsers || "";
-    if (h === "maxAccuracy") val = payload.maxAccuracy || "";
+    if (h === "maxAccuracy") val = numOr(payload.maxAccuracy, "");
 
     rowData.push(val);
     savedObj[h] = val;
@@ -988,10 +1003,13 @@ function validateGeofence(payload) {
   const areaId = payload.areaId || "default";
   const lat = Number(payload.lat);
   const lng = Number(payload.lng);
-  const accuracy = Number(payload.accuracy || 999); // รับค่าความคลาดเคลื่อนมาด้วย
+  const accuracy = numOr(payload.accuracy, 999); // รับค่าความคลาดเคลื่อนมาด้วย (0 คือค่าที่ถูกต้อง ไม่ใช่ค่าไม่มี)
 
   if (isNaN(lat) || isNaN(lng)) return { ok: false, err: "พิกัดไม่ถูกต้อง" };
-  
+
+  // BUGFIX: เรียก ensureLocationSheetSchema() ก่อนอ่านเสมอ เพื่อให้แถวพื้นที่เก่าที่ยังไม่มีคอลัมน์
+  // maxAccuracy ได้รับการเพิ่มคอลัมน์อัตโนมัติ (ไม่กระทบข้อมูลเดิม) ก่อนจะนำไปตรวจสอบ
+  ensureLocationSheetSchema();
   const areas = getSheetDataAsObjects("location");
   // ค้นหาพื้นที่โดยเน้นที่ areaId หรือ qr_code (รองรับ Legacy)
   let area = areas.find(a => {
@@ -1006,29 +1024,16 @@ function validateGeofence(payload) {
 
   // ปฏิเสธพิกัดที่คลาดเคลื่อนสูงเกินไป โดยใช้ค่า maxAccuracy จาก Config พื้นที่นั้นๆ (ถ้าไม่มีใช้ 30 เมตร)
   // เพื่อป้องกันการ "กระโดด" ของ GPS นอกพื้นที่
-  const areaMaxAcc = Number(area.maxAccuracy || payload.maxAccuracy || 30);
-  if (accuracy > areaMaxAcc) {
-    return { 
-      ok: false, 
-      err: "สัญญาณ GPS ไม่เสถียร (ความแม่นยำปัจจุบัน: " + accuracy.toFixed(1) + "m) " +
-           "พื้นที่นี้กำหนดไว้ไม่เกิน " + areaMaxAcc + "m " +
-           "กรุณายืนในที่โล่งหรือขยับห่างจากอาคารแล้วลองใหม่" 
-    };
-  }
+  const areaMaxAcc = numOr(area.maxAccuracy, numOr(payload.maxAccuracy, 30));
 
-  const centerLat = Number(area.lat || area.centerLat);
-  const centerLng = Number(area.lng || area.centerLng);
-
-  if (isNaN(centerLat) || isNaN(centerLng)) {
-    // ข้อมูลพื้นที่ผิดปกติ — ปฏิเสธการเช็กอินแทนการปล่อยผ่าน (fail-closed ไม่ใช่ fail-open)
-    return { ok: false, err: "ไม่พบข้อมูลพื้นที่ที่ถูกต้อง กรุณาติดต่อผู้ดูแลระบบ" };
-  }
+  const centerLat = numOr(area.lat, numOr(area.centerLat, NaN));
+  const centerLng = numOr(area.lng, numOr(area.centerLng, NaN));
 
   // คำนวณขอบเขตสี่เหลี่ยม (แบบเดียวกับ frontend) — ไม่มีการบวกเพิ่มระยะอนุโลมใดๆ
-  const north = Number(area.north || area.northMeters || 50);
-  const south = Number(area.south || area.southMeters || 50);
-  const east = Number(area.east || area.eastMeters || 80);
-  const west = Number(area.west || area.westMeters || 50);
+  const north = numOr(area.north, numOr(area.northMeters, 50));
+  const south = numOr(area.south, numOr(area.southMeters, 50));
+  const east = numOr(area.east, numOr(area.eastMeters, 80));
+  const west = numOr(area.west, numOr(area.westMeters, 50));
 
   // แปลงเมตรเป็นเดลต้าพิกัด (โดยประมาณ)
   const latDeltaNorth = north / 111320;
@@ -1044,6 +1049,40 @@ function validateGeofence(payload) {
   const maxLat = centerLat + latDeltaNorth + tolerance;
   const minLng = centerLng - lngDeltaWest - tolerance;
   const maxLng = centerLng + lngDeltaEast + tolerance;
+
+  const distanceFromCenter = !isNaN(centerLat) && !isNaN(centerLng)
+    ? calculateDistance(lat, lng, centerLat, centerLng)
+    : null;
+
+  // Debug log: ไว้ดูใน Apps Script > Executions ตอน check-in มีปัญหา
+  // แสดง lat/lng ที่ผู้ใช้ส่งมา, accuracy, รัศมี/ขอบเขตของพื้นที่ (north/south/east/west), และระยะทางที่คำนวณได้
+  console.log("[validateGeofence] debug: " + JSON.stringify({
+    areaId: areaId,
+    resolvedAreaId: String(area.areaId || area.qr_code || ""),
+    lat: lat,
+    lng: lng,
+    accuracy: accuracy,
+    areaMaxAccuracy: areaMaxAcc,
+    centerLat: centerLat,
+    centerLng: centerLng,
+    radiusMeters: { north: north, south: south, east: east, west: west },
+    boundary: { minLat: minLat, maxLat: maxLat, minLng: minLng, maxLng: maxLng },
+    distanceFromCenterMeters: distanceFromCenter,
+  }));
+
+  if (accuracy > areaMaxAcc) {
+    return { 
+      ok: false, 
+      err: "สัญญาณ GPS ไม่เสถียร (ความแม่นยำปัจจุบัน: " + accuracy.toFixed(1) + "m) " +
+           "พื้นที่นี้กำหนดไว้ไม่เกิน " + areaMaxAcc + "m " +
+           "กรุณายืนในที่โล่งหรือขยับห่างจากอาคารแล้วลองใหม่" 
+    };
+  }
+
+  if (isNaN(centerLat) || isNaN(centerLng)) {
+    // ข้อมูลพื้นที่ผิดปกติ — ปฏิเสธการเช็กอินแทนการปล่อยผ่าน (fail-closed ไม่ใช่ fail-open)
+    return { ok: false, err: "ไม่พบข้อมูลพื้นที่ที่ถูกต้อง กรุณาติดต่อผู้ดูแลระบบ" };
+  }
 
   // เช็คแบบอนุโลมเล็กน้อย: ต้องอยู่ในกรอบ + tolerance
   const isInside = lat >= minLat && lat <= maxLat &&
@@ -1083,15 +1122,28 @@ function saveLog(payload) {
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
 
+  // BUGFIX (ไม่บันทึกค่า accuracy): เดิมใช้ `payload.accuracy || ""` ซึ่งถ้า accuracy ที่ส่งมาเป็น 0
+  // (ค่าความแม่นยำที่ถูกต้อง ไม่ใช่ค่าไม่มี) จะถูกมองเป็น falsy แล้วเขียนเป็นค่าว่างแทน
+  // ใช้ numOr() ตรวจสอบว่าเป็นตัวเลขจริงก่อน ถ้าไม่ใช่ตัวเลขเลยจึงเขียนเป็นค่าว่าง
+  const safeAccuracy = numOr(payload.accuracy, "");
+
+  // Debug log: ค่าที่กำลังจะบันทึกลง Google Sheet จริง (lat, lng, accuracy)
+  console.log("[saveLog] debug: " + JSON.stringify({
+    areaId: payload.areaId,
+    lat: payload.lat,
+    lng: payload.lng,
+    accuracy: safeAccuracy,
+  }));
+
   const rowData = headers.map(function (h) {
     if (h === "createdAt") return createdAtBangkok;
     if (h === "displayName") return resolvedDisplayName;
     if (h === "email") return payload.email || "";
     if (h === "phone") return payload.phone || "";
     if (h === "site") return payload.site || "";
-    if (h === "lat") return payload.lat || "";
-    if (h === "lng") return payload.lng || "";
-    if (h === "accuracy") return payload.accuracy || "";
+    if (h === "lat") return numOr(payload.lat, "");
+    if (h === "lng") return numOr(payload.lng, "");
+    if (h === "accuracy") return safeAccuracy;
     if (h === "userId") return resolvedUserId;
     if (h === "status") return payload.status || "checked_in";
     return "";

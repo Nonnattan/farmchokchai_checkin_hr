@@ -78,6 +78,23 @@ const { createApp, computed, onMounted, ref, nextTick } = Vue;
           const inside = common.isInsideBoundary(pos.coords.latitude, pos.coords.longitude, boundary.value);
           result.value = inside ? "inside" : "outside";
           message.value = inside ? "ผ่านเงื่อนไข สามารถเช็กอินได้" : "อยู่นอกพื้นที่ที่กำหนด";
+
+          // Debug log: lat, lng, accuracy และระยะห่างจากจุดศูนย์กลาง (ไว้ตรวจสอบตอน check-in ไม่ผ่าน)
+          if (common.calculateDistanceMeters && config.value?.centerLat) {
+            console.log("[CheckinAuth] GPS reading:", {
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+              accuracy: pos.coords.accuracy,
+              distanceToCenterMeters: common.calculateDistanceMeters(
+                pos.coords.latitude,
+                pos.coords.longitude,
+                config.value.centerLat,
+                config.value.centerLng,
+              ),
+              isInside: inside,
+            });
+          }
+
           if (map) {
             if (!currentMarker) currentMarker = L.circleMarker([pos.coords.latitude, pos.coords.longitude], { radius: 8, color: '#dc2626', fillColor: '#ef4444', fillOpacity: 1, weight: 2 }).addTo(map).bindPopup('ตำแหน่งปัจจุบัน');
             else currentMarker.setLatLng([pos.coords.latitude, pos.coords.longitude]);
@@ -114,11 +131,17 @@ const { createApp, computed, onMounted, ref, nextTick } = Vue;
     }
 
     onMounted(async () => {
-      await loadConfig();
-      await nextTick();
-      initMap();
-      refreshMap();
-      requestLocation();
+      try {
+        await loadConfig();
+        await nextTick();
+        initMap();
+        refreshMap();
+        requestLocation();
+      } catch (err) {
+        // ป้องกันหน้าเว็บพัง เผื่อ common.getConfig() โหลดพื้นที่ไม่สำเร็จจริงๆ (ไม่มีทั้งข้อมูลสดและแคช)
+        console.error(err);
+        message.value = err?.message || "โหลดการตั้งค่าไม่สำเร็จ กรุณารีเฟรชหน้าเว็บ";
+      }
     });
 
     return { config, loading, permissionState, result, message, currentLocation, boundary, session, site, insideNow, locationRequired, requestLocation, doCheckIn, common, mapEl };

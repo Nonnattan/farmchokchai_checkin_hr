@@ -2,6 +2,36 @@ const { createApp, computed, onMounted, ref, nextTick, watch } = Vue;
 const common = window.CheckinCommon;
 const LIFF_INIT_TIMEOUT_MS = 12000;
 const PENDING_FLOW_KEY = "pending_checkin_flow";
+// ⚠️ BUGFIX (เลือกพื้นที่ที่ 2 แต่พอ redirect ไป LINE Login กลับมาแล้วกลายเป็นพื้นที่แรก):
+// เดิมโค้ดอ่าน areaId จาก query string ของ URL ปัจจุบันเท่านั้น ปัญหาคือระหว่างที่ liff.login()
+// พาไปหน้า LINE Login แล้ว redirect กลับมา บางเบราว์เซอร์/เคส LIFF จะไม่คืนค่า query string
+// (areaId=...) กลับมาครบตามที่ส่งไปเป๊ะๆ ทำให้พอกลับมาถึงหน้าเว็บ areaId ว่างเปล่า แล้วโค้ดฝั่ง
+// common.getArea("") จะ fallback ไปใช้ "พื้นที่แรกสุดในชีต" แทนพื้นที่ที่ user เลือกไว้จริง (พื้นที่ 2)
+// แก้โดย: จำ areaId ไว้ใน sessionStorage ตั้งแต่ตอนเปิดหน้านี้ครั้งแรก (ก่อนจะมีการ redirect ใดๆ)
+// แล้วถ้ากลับมาแล้ว URL ไม่มี areaId ให้ดึงค่าที่จำไว้กลับมาใช้แทน (sessionStorage อยู่รอด
+// ตลอด tab เดียวกันแม้จะมีการ redirect ไป-กลับหลายรอบ)
+const AREA_ID_STORAGE_KEY = "checkin_pending_area_id";
+// เปลี่ยนจำนวนครั้งการสุ่มอ่านค่า GPS ("retry") เพื่อเลือกพิกัดที่แม่นที่สุดจาก 10 ครั้ง เหลือ 5 ครั้ง
+// (ลดเวลาที่ user ต้องรอตอนกดเช็คอิน โดยยังคง logic คัดเลือกพิกัดที่ดีที่สุดแบบเดิมไว้ทั้งหมด)
+const MAX_GPS_READINGS = 5;
+// เก็บระยะเวลาขั้นต่ำระหว่างการ "รับ" ค่าพิกัดแต่ละครั้ง (ดูรายละเอียดที่ startGPSSampling ด้านล่าง)
+const READING_INTERVAL_MS = 2000;
+
+function resolveAreaId(query) {
+  const fromUrl = String(query.get("areaId") || query.get("qr_code") || query.get("site") || "").trim();
+  if (fromUrl) {
+    try { sessionStorage.setItem(AREA_ID_STORAGE_KEY, fromUrl); } catch (e) { /* เบราว์เซอร์บางตัวอาจปิด storage ไว้ ไม่เป็นไร */ }
+    return fromUrl;
+  }
+  try {
+    const remembered = String(sessionStorage.getItem(AREA_ID_STORAGE_KEY) || "").trim();
+    if (remembered) {
+      console.warn("[UserCheckin] areaId หายไปจาก URL (น่าจะระหว่าง redirect LINE Login) — ใช้ค่าที่จำไว้ก่อนหน้าแทน:", remembered);
+      return remembered;
+    }
+  } catch (e) { /* no-op */ }
+  return "";
+}
 
 function setPendingFlow() {
   sessionStorage.setItem(PENDING_FLOW_KEY, "1");
@@ -15,11 +45,14 @@ function clearPendingFlow() {
   sessionStorage.removeItem(PENDING_FLOW_KEY);
 }
 
-function getReturnUrl() {
+function getReturnUrl(areaId) {
   const url = new URL(window.location.href);
   ["code", "state", "liff.state", "access_token", "token"].forEach((key) => {
     url.searchParams.delete(key);
   });
+  // การันตีว่า areaId ติดไปกับ URL ที่ขอให้ LINE Login redirect กลับมาเสมอ ป้องกันกรณี URL ปัจจุบัน
+  // ทำ areaId หายไปแล้วตั้งแต่ก่อนเรียกฟังก์ชันนี้ (เช่น โดน strip ไปจากสาเหตุอื่น)
+  if (areaId) url.searchParams.set("areaId", areaId);
   url.hash = "";
   return url.toString();
 }
@@ -64,7 +97,7 @@ createApp({
     const samplingInProgress = ref(false);
 
     const query = new URLSearchParams(location.search);
-    const areaId = query.get("areaId") || query.get("qr_code") || query.get("site") || "";
+    const areaId = resolveAreaId(query);
     const session = query.get("session") || "-";
     const site = computed(
       () => query.get("site") || config.value.siteName || config.value.areaName || "-",
@@ -95,7 +128,7 @@ createApp({
     const dynamicButtonText = computed(() => {
       if (authState.value === "checking") return "กำลังตรวจสอบ...";
       if (authState.value === "logged_out") return "กำลังเปลี่ยนเส้นทางไปยัง LINE Login...";
-      if (samplingInProgress.value) return `กำลังเก็บข้อมูล GPS... (${readingCount.value}/10)`;
+      if (samplingInProgress.value) return `กำลังเก็บข้อมูล GPS... (${readingCount.value}/${MAX_GPS_READINGS})`;
       if (loading.value) return "กำลังบันทึกข้อมูล...";
       return "เช็คอิน";
     });
@@ -109,14 +142,41 @@ createApp({
     async function loadConfig() {
       try {
         const area = await common.getArea(areaId, 15000);
+
+        // ⚠️ BUGFIX (check-in ไม่ผ่านทั้งที่อยู่ในพื้นที่จริง):
+        // เดิมถ้า areaId ที่ QR ส่งมาหาไม่เจอในชีต (เช่น พื้นที่ถูกลบ/สร้างรหัสใหม่แล้ว QR เก่ายังไม่ได้พิมพ์ใหม่
+        // หรือแคชพื้นที่บนเครื่อง user ยังไม่อัปเดต) common.getArea() จะเงียบๆ ใช้พื้นที่แรกในลิสต์แทน (areas[0])
+        // ซึ่งอาจเป็นพื้นที่คนละจุดกับที่ user ยืนอยู่จริง ทำให้เช็คระยะทาง/รัศมีผิดพื้นที่โดยไม่มีใครรู้
+        // แก้โดย: ถ้า QR ระบุ areaId มาชัดเจน แต่พื้นที่ที่โหลดกลับมาไม่ตรงกับ areaId นั้น ให้ถือว่าโหลดไม่สำเร็จ
+        // แล้วแจ้ง error ให้ user สแกน QR ใหม่ / แจ้งแอดมิน แทนที่จะปล่อยให้เช็คอินกับพิกัดผิดพื้นที่
+        if (areaId && String(area?.areaId || "").trim() !== String(areaId).trim()) {
+          throw new Error(
+            `ไม่พบพื้นที่ตามรหัส QR (${areaId}) ในระบบ กรุณาสแกน QR ใหม่ หรือแจ้งผู้ดูแลระบบให้ตรวจสอบหน้า SetArea`,
+          );
+        }
+
         config.value = common.normalizeConfig(area);
         maxAccuracy.value = Number(config.value.maxAccuracy || 30);
+
+        // Debug log: ค่าพื้นที่/รัศมีที่โหลดมาใช้เช็คอินจริง (lat, lng, ขอบเขตแต่ละทิศ, maxAccuracy)
+        console.log("[UserCheckin] loadConfig: โหลดพื้นที่สำเร็จ", {
+          requestedAreaId: areaId || "(ไม่ระบุ ใช้พื้นที่แรก)",
+          resolvedAreaId: config.value.areaId,
+          areaName: config.value.areaName,
+          centerLat: config.value.centerLat,
+          centerLng: config.value.centerLng,
+          northMeters: config.value.northMeters,
+          southMeters: config.value.southMeters,
+          eastMeters: config.value.eastMeters,
+          westMeters: config.value.westMeters,
+          maxAccuracy: maxAccuracy.value,
+        });
       } catch (err) {
         console.error(err);
         setStatus(
           "error",
           "โหลดการตั้งค่าไม่สำเร็จ",
-          "กรุณาตรวจสอบการเชื่อมต่อกับ Google Sheet/Apps Script",
+          err?.message || "กรุณาตรวจสอบการเชื่อมต่อกับ Google Sheet/Apps Script",
         );
       }
     }
@@ -151,7 +211,7 @@ createApp({
             "กรุณารอสักครู่ ระบบกำลังพาคุณไปยังหน้า LINE Authentication",
           );
           // Requirement 4: Automatic LINE Login redirect
-          liff.login({ redirectUri: getReturnUrl() });
+          liff.login({ redirectUri: getReturnUrl(areaId) });
         }
       } catch (err) {
         console.error(err);
@@ -173,7 +233,11 @@ createApp({
         : {};
       const displayName = profile.value?.displayName || "";
 
-      return {
+      // BUGFIX (accuracy ไม่ถูกบันทึก): ต้องส่ง accuracy เป็นตัวเลขเสมอ (รวมถึงกรณี 0 ซึ่งเป็นค่าที่ถูกต้อง
+      // ไม่ใช่ค่าว่าง) ห้ามใช้ `accuracy || 0` เพราะ 0 จะถูกมองเป็น falsy แล้วเปลี่ยนเป็นค่าอื่นโดยไม่ตั้งใจ
+      const safeAccuracy = Number.isFinite(Number(accuracy)) ? Number(accuracy) : null;
+
+      const payload = {
         ...pending,
         site: site.value,
         session,
@@ -182,11 +246,22 @@ createApp({
         email: decoded?.email || pending.email || "",
         lat,
         lng,
-        accuracy,
+        accuracy: safeAccuracy,
         maxAccuracy: maxAccuracy.value,
         time: common.formatBangkokNow ? common.formatBangkokNow() : new Date().toISOString(),
         userId: profile.value?.userId || "",
       };
+
+      // Debug log: payload สุดท้ายที่จะส่งไปบันทึก (lat, lng, accuracy ต้องไม่หายไประหว่างทาง)
+      console.log("[UserCheckin] buildPayload:", {
+        lat: payload.lat,
+        lng: payload.lng,
+        accuracy: payload.accuracy,
+        maxAccuracy: payload.maxAccuracy,
+        areaId: payload.areaId,
+      });
+
+      return payload;
     }
 
     function drawBoundary() {
@@ -267,6 +342,20 @@ createApp({
           config.value.centerLng,
         );
       }
+
+      // Debug log: ค่าที่อ่านได้จาก GPS จริง ณ ขณะนี้ (lat, lng, accuracy) และระยะห่างจากจุดศูนย์กลางพื้นที่
+      console.log("[UserCheckin] GPS reading:", {
+        lat: currentLat.value,
+        lng: currentLng.value,
+        accuracy: currentAccuracy.value,
+        distanceToCenterMeters: currentDistance.value,
+        areaRadius: {
+          north: config.value?.northMeters,
+          south: config.value?.southMeters,
+          east: config.value?.eastMeters,
+          west: config.value?.westMeters,
+        },
+      });
 
       if (!map || !window.L) return;
 
@@ -379,12 +468,18 @@ createApp({
       setStatus(
         "loading",
         "กำลังเริ่มเก็บข้อมูล GPS...",
-        "กำลังเก็บข้อมูล 10 ครั้ง ทุก 2 วินาที",
+        `กำลังเก็บข้อมูล ${MAX_GPS_READINGS} ครั้ง ทุก 2 วินาที`,
       );
 
       let readingsCollected = 0;
-      const READING_INTERVAL = 2000; // 2 seconds
-      const MAX_READINGS = 10;
+      const READING_INTERVAL = READING_INTERVAL_MS; // 2 seconds
+      const MAX_READINGS = MAX_GPS_READINGS;
+      // ⚠️ BUGFIX (กด 5 ครั้งแล้วเสร็จปุ๊บปั๊บ ไม่รอ 2 วิ/ครั้งจริง):
+      // watchPosition() ของมือถือหลายรุ่นยิง callback ถี่กว่า 2 วินาทีมาก (บางเครื่อง <1 วิ/ครั้ง)
+      // เดิมโค้ดรับทุก callback ที่เข้ามาทันทีโดยไม่เช็คเวลาจริง พอลดจาก 10 เหลือ 5 ครั้ง เลยดูเหมือน
+      // เสร็จทันทีทั้งที่ข้อความแจ้งผู้ใช้บอกว่า "เก็บข้อมูลทุก 2 วินาที" ต้องบังคับเว้นระยะเวลาจริง
+      // ระหว่างค่าที่ "นับ" แต่ละครั้งเอง (ค่าที่ยังไม่ถึงคิวจะยังอัปเดตแผนที่/ตำแหน่งสดให้เห็นตามปกติ)
+      let lastAcceptedAt = 0;
 
       watchId = navigator.geolocation.watchPosition(
         (pos) => {
@@ -392,8 +487,17 @@ createApp({
           const lng = pos.coords.longitude;
           const accuracy = pos.coords.accuracy;
 
-          // Always update display
+          // อัปเดตตำแหน่งบนแผนที่/ตัวเลขสดทุกครั้งที่มีสัญญาณใหม่เข้ามา ไม่ต้องรอครบ 2 วิ
           updateCurrentPosition(lat, lng, accuracy);
+
+          if (readingsCollected >= MAX_READINGS) return;
+
+          const now = Date.now();
+          if (readingsCollected > 0 && now - lastAcceptedAt < READING_INTERVAL) {
+            // ยังไม่ครบ 2 วินาทีนับจากค่าก่อนหน้า ข้ามค่านี้ไปก่อน (รอ callback ครั้งถัดไป)
+            return;
+          }
+          lastAcceptedAt = now;
 
           // Collect reading only if we haven't reached max
           if (readingsCollected < MAX_READINGS) {
@@ -425,6 +529,17 @@ createApp({
                   bestGPS.lng,
                   boundary.value,
                 );
+
+                // Debug log: สรุปพิกัดที่เลือกใช้จริง + ผลการตรวจสอบพื้นที่ (ไว้ตรวจตอน check-in ไม่ผ่าน)
+                console.log("[UserCheckin] geofence decision:", {
+                  selectedLat: bestGPS.lat,
+                  selectedLng: bestGPS.lng,
+                  selectedAccuracy: bestGPS.accuracy,
+                  maxAccuracyAllowed: maxAccuracy.value,
+                  distanceToCenterMeters: currentDistance.value,
+                  boundary: boundary.value,
+                  isInside: inside,
+                });
 
                 if (inside) {
                   setStatus(
