@@ -314,7 +314,7 @@
                 <b>ความแม่นยำ GPS :</b> {{ currentAccuracy.toFixed(1) }} เมตร
               </div>
               <div v-if="readingCount > 0" style="margin-top: 4px;">
-                <b>ตรวจสอบแล้ว :</b> {{ readingCount }} / 5 ครั้ง
+                <b>ตรวจสอบแล้ว :</b> {{ readingCount }} / {{ maxGpsReadings }} ครั้ง
               </div>
               <div style="margin-top: 4px;">
                 <b>สถานะ :</b> {{ message }}

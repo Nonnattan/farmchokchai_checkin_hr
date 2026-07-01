@@ -2,34 +2,60 @@ const { createApp, computed, onMounted, ref, nextTick, watch } = Vue;
 const common = window.CheckinCommon;
 const LIFF_INIT_TIMEOUT_MS = 12000;
 const PENDING_FLOW_KEY = "pending_checkin_flow";
-// ⚠️ BUGFIX (เลือกพื้นที่ที่ 2 แต่พอ redirect ไป LINE Login กลับมาแล้วกลายเป็นพื้นที่แรก):
+// ⚠️ BUGFIX (เลือกพื้นที่ที่ 2 แต่พอ redirect ไป LINE Login กลับมาแล้วกลายเป็นพื้นที่แรก — เกิดเฉพาะบางเครื่อง):
 // เดิมโค้ดอ่าน areaId จาก query string ของ URL ปัจจุบันเท่านั้น ปัญหาคือระหว่างที่ liff.login()
 // พาไปหน้า LINE Login แล้ว redirect กลับมา บางเบราว์เซอร์/เคส LIFF จะไม่คืนค่า query string
 // (areaId=...) กลับมาครบตามที่ส่งไปเป๊ะๆ ทำให้พอกลับมาถึงหน้าเว็บ areaId ว่างเปล่า แล้วโค้ดฝั่ง
 // common.getArea("") จะ fallback ไปใช้ "พื้นที่แรกสุดในชีต" แทนพื้นที่ที่ user เลือกไว้จริง (พื้นที่ 2)
-// แก้โดย: จำ areaId ไว้ใน sessionStorage ตั้งแต่ตอนเปิดหน้านี้ครั้งแรก (ก่อนจะมีการ redirect ใดๆ)
-// แล้วถ้ากลับมาแล้ว URL ไม่มี areaId ให้ดึงค่าที่จำไว้กลับมาใช้แทน (sessionStorage อยู่รอด
-// ตลอด tab เดียวกันแม้จะมีการ redirect ไป-กลับหลายรอบ)
+// รอบแรกที่แก้ใช้ sessionStorage จำค่าไว้ ซึ่งช่วยได้ในเบราว์เซอร์ส่วนใหญ่ แต่ "บางเครื่อง" (เช่น
+// LINE เปิดหน้า LINE Login ในอีก tab/webview instance หนึ่งที่แยกจาก tab เดิม หรือโหมดที่เบราว์เซอร์
+// ล้าง session ระหว่าง redirect ข้าม origin) sessionStorage จะเป็นคนละก้อนกับ tab เดิม อ่านค่าที่จำไว้
+// ไม่เจอ ทำให้ยังหลุดไปพื้นที่แรกอยู่ดี — เปลี่ยนไปใช้ localStorage แทน เพราะ localStorage ใช้ร่วมกัน
+// ได้ทุก tab/webview ของ origin เดียวกัน (ไม่ผูกกับ tab ที่เปิดตอนแรก) พร้อมประทับเวลาไว้ด้วย เพื่อไม่ให้
+// ค่าเก่าจากการสแกนพื้นที่อื่นเมื่อนานมาแล้ว (เช่น เมื่อวาน) ค้างมาปนกับรอบสแกนใหม่โดยไม่ตั้งใจ
 const AREA_ID_STORAGE_KEY = "checkin_pending_area_id";
+const AREA_ID_STORAGE_TTL_MS = 10 * 60 * 1000; // ใช้ค่าที่จำไว้ได้ไม่เกิน 10 นาที
 // เปลี่ยนจำนวนครั้งการสุ่มอ่านค่า GPS ("retry") เพื่อเลือกพิกัดที่แม่นที่สุดจาก 10 ครั้ง เหลือ 5 ครั้ง
 // (ลดเวลาที่ user ต้องรอตอนกดเช็คอิน โดยยังคง logic คัดเลือกพิกัดที่ดีที่สุดแบบเดิมไว้ทั้งหมด)
 const MAX_GPS_READINGS = 5;
 // เก็บระยะเวลาขั้นต่ำระหว่างการ "รับ" ค่าพิกัดแต่ละครั้ง (ดูรายละเอียดที่ startGPSSampling ด้านล่าง)
 const READING_INTERVAL_MS = 2000;
 
+function rememberAreaId(id) {
+  try {
+    localStorage.setItem(AREA_ID_STORAGE_KEY, JSON.stringify({ id, ts: Date.now() }));
+  } catch (e) { /* เบราว์เซอร์บางตัวอาจปิด storage ไว้ ไม่เป็นไร */ }
+}
+
+function recallAreaId() {
+  try {
+    const raw = localStorage.getItem(AREA_ID_STORAGE_KEY);
+    if (!raw) return "";
+    const parsed = JSON.parse(raw);
+    const id = String(parsed?.id || "").trim();
+    if (!id) return "";
+    if (Date.now() - Number(parsed?.ts || 0) > AREA_ID_STORAGE_TTL_MS) return ""; // ค่าเก่าเกินไป ไม่ใช้
+    return id;
+  } catch (e) {
+    return "";
+  }
+}
+
+function forgetAreaId() {
+  try { localStorage.removeItem(AREA_ID_STORAGE_KEY); } catch (e) { /* no-op */ }
+}
+
 function resolveAreaId(query) {
   const fromUrl = String(query.get("areaId") || query.get("qr_code") || query.get("site") || "").trim();
   if (fromUrl) {
-    try { sessionStorage.setItem(AREA_ID_STORAGE_KEY, fromUrl); } catch (e) { /* เบราว์เซอร์บางตัวอาจปิด storage ไว้ ไม่เป็นไร */ }
+    rememberAreaId(fromUrl);
     return fromUrl;
   }
-  try {
-    const remembered = String(sessionStorage.getItem(AREA_ID_STORAGE_KEY) || "").trim();
-    if (remembered) {
-      console.warn("[UserCheckin] areaId หายไปจาก URL (น่าจะระหว่าง redirect LINE Login) — ใช้ค่าที่จำไว้ก่อนหน้าแทน:", remembered);
-      return remembered;
-    }
-  } catch (e) { /* no-op */ }
+  const remembered = recallAreaId();
+  if (remembered) {
+    console.warn("[UserCheckin] areaId หายไปจาก URL (น่าจะระหว่าง redirect LINE Login) — ใช้ค่าที่จำไว้ก่อนหน้าแทน:", remembered);
+    return remembered;
+  }
   return "";
 }
 
@@ -127,6 +153,7 @@ createApp({
     // FIX: แปลข้อความปุ่มเป็นภาษาไทยทั้งหมด และเพิ่ม state "checking"
     const dynamicButtonText = computed(() => {
       if (authState.value === "checking") return "กำลังตรวจสอบ...";
+      if (authState.value === "error") return "⟳ ลองเชื่อมต่อใหม่";
       if (authState.value === "logged_out") return "กำลังเปลี่ยนเส้นทางไปยัง LINE Login...";
       if (samplingInProgress.value) return `กำลังเก็บข้อมูล GPS... (${readingCount.value}/${MAX_GPS_READINGS})`;
       if (loading.value) return "กำลังบันทึกข้อมูล...";
@@ -157,6 +184,7 @@ createApp({
 
         config.value = common.normalizeConfig(area);
         maxAccuracy.value = Number(config.value.maxAccuracy || 30);
+        forgetAreaId(); // โหลด/ตรวจสอบพื้นที่สำเร็จแล้ว เลิกจำค่านี้ไว้ ป้องกันไม่ให้ไปปนกับรอบสแกนถัดไป
 
         // Debug log: ค่าพื้นที่/รัศมีที่โหลดมาใช้เช็คอินจริง (lat, lng, ขอบเขตแต่ละทิศ, maxAccuracy)
         console.log("[UserCheckin] loadConfig: โหลดพื้นที่สำเร็จ", {
@@ -188,10 +216,18 @@ createApp({
         if (!common?.LIFF_ID)
           throw new Error("กรุณาตรวจสอบการตั้งค่า LIFF ID");
 
+        // ⚠️ BUGFIX (สแกน QR พื้นที่ 2 แต่ล็อกอิน LINE เสร็จแล้วกลับมาเป็นพื้นที่ 1):
+        // เดิมตั้ง withLoginOnExternalBrowser: true ซึ่งสั่งให้ liff.init() เองเป็นคน "เด้งไป LINE Login
+        // อัตโนมัติ" ทันทีเมื่อเปิดผ่านเบราว์เซอร์ภายนอก (เช่น กล้องสแกน QR แล้วเปิดด้วย Safari/Chrome)
+        // และยังไม่ได้ล็อกอิน — การเด้งอัตโนมัตินี้เกิดขึ้น "ก่อน" ที่โค้ดด้านล่างจะได้เรียก liff.login()
+        // ของเราเองที่ตั้งใจฝัง areaId ไว้ใน redirectUri (ดู getReturnUrl) ผลคือ LIFF ใช้ปลายทาง redirect
+        // ของมันเอง (ไม่ใช่ของเรา) พอกลับมาเลยไม่มี areaId ติดกลับมา ระบบเลย fallback ไปพื้นที่แรกเสมอ
+        // แก้โดย: ปิดออโต้ล็อกอินนี้ (false) แล้วให้ else-branch ด้านล่างเป็นคนเรียก liff.login() เอง
+        // ทุกครั้งเพียงจุดเดียว การันตีว่า redirectUri ที่มี areaId ถูกใช้จริงเสมอ ไม่มีทางอื่นแทรกได้
         await withTimeout(
           liff.init({
             liffId: common.LIFF_ID,
-            withLoginOnExternalBrowser: true,
+            withLoginOnExternalBrowser: false,
           }),
           LIFF_INIT_TIMEOUT_MS,
           "หมดเวลาการเริ่มต้น LIFF",
@@ -604,18 +640,36 @@ createApp({
       );
     }
 
+    // FIX: เมื่อ authState เป็น "error" (เช่น LIFF init ล้มเหลว/หมดเวลา) เดิมกดปุ่มแล้วไม่มีอะไรเกิดขึ้นเลย
+    // (confirmCheckIn เช็คแค่ authState !== 'logged_in' แล้ว return เงียบๆ) ผู้ใช้จึงต้องออกไปสแกน QR ใหม่
+    // ทั้งที่จริงๆ แค่ลองเชื่อมต่อ LIFF ใหม่ในหน้าเดิมก็พอ ฟังก์ชันนี้ reset สถานะแล้วลอง loadConfig+initLiff อีกครั้ง
+    async function retryInit() {
+      authState.value = "checking";
+      setStatus("idle", "กำลังลองเชื่อมต่อใหม่...", "กรุณารอสักครู่");
+      try {
+        await Promise.all([loadConfig(), initLiff()]);
+        await nextTick();
+        initMap();
+      } catch (err) {
+        console.error("ข้อผิดพลาดการลองเชื่อมต่อใหม่:", err);
+      }
+    }
+
     // FIX: ฟังก์ชันจัดการการกดปุ่มเช็คอิน - ป้องกันการกดซ้ำหลายครั้ง
     function confirmCheckIn() {
+      if (authState.value === "error") { retryInit(); return; } // ลองเชื่อมต่อ LIFF ใหม่แทนที่จะกดไม่ได้เลย
       if (loading.value) return;           // ป้องกันกดซ้ำขณะบันทึก
       if (samplingInProgress.value) return; // ป้องกันกดซ้ำขณะเก็บ GPS
       if (authState.value !== "logged_in") return; // ต้อง login ก่อน
       startGPSSampling();
     }
 
+    // FIX (ตรวจสอบนานเกินไป): เดิมโหลดพื้นที่ (loadConfig, เรียก Google Apps Script) และเริ่มต้น LIFF
+    // (initLiff) แบบ "ทีละขั้น" (await ต่อกัน) ทำให้เวลารอรวมกันได้สูงสุดถึง ~27 วิ (15s + 12s) ในเคสที่ช้าสุด
+    // ทั้งที่จริงๆ สองงานนี้ไม่เกี่ยวข้องกัน ทำพร้อมกันได้เลย (Promise.all) ช่วยลดเวลารอลงเกือบครึ่งหนึ่ง
     onMounted(async () => {
       try {
-        await loadConfig();
-        await initLiff();
+        await Promise.all([loadConfig(), initLiff()]);
         await nextTick();
         initMap();
       } catch (err) {
@@ -661,6 +715,7 @@ createApp({
       currentDistance,
       readingCount,
       maxAccuracy,
+      maxGpsReadings: MAX_GPS_READINGS, // FIX: template เดิมเขียนเลข "/10" ตายตัว ทั้งที่ตอนนี้สุ่ม GPS แค่ 5 ครั้ง
       startGPSSampling,
       confirmCheckIn,
       samplingInProgress,
