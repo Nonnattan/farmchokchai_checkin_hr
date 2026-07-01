@@ -7,7 +7,7 @@
   function ensureFirebase() {
     if (initialized.value && authInstance) return authInstance;
     if (!window.firebase || !firebase.initializeApp) {
-      throw new Error("Firebase SDK not loaded");
+      throw new Error("ไม่สามารถโหลด Firebase SDK ได้");
     }
     if (!firebase.apps.length) firebase.initializeApp(cfg);
     authInstance = firebase.auth();

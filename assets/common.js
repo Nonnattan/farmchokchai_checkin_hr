@@ -176,11 +176,11 @@
         throw new Error("Apps Script ตอบกลับไม่ใช่ JSON: " + text);
       }
       if (!response.ok || data.ok === false) {
-        throw new Error(data.err || data.error || data.message || "API request failed");
+        throw new Error(data.err || data.error || data.message || "การร้องขอ API ล้มเหลว");
       }
       return data;
     } catch (err) {
-      if (err && err.name === "AbortError") throw new Error("request_timeout");
+      if (err && err.name === "AbortError") throw new Error("หมดเวลาการร้องขอ");
       throw err;
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
@@ -646,7 +646,7 @@
     if (db) {
       const docId = String(normalized.uid || normalized.email || "").trim();
       if (!docId) {
-        throw new Error("missing_user_id");
+        throw new Error("ไม่พบรหัสผู้ใช้");
       }
       const payload = {
         ...normalized,
@@ -678,7 +678,7 @@
         await db.collection("users").doc(docId).delete().catch(() => { });
         return { ok: true };
       }
-      throw new Error("missing_user_id");
+      throw new Error("ไม่พบรหัสผู้ใช้");
     }
 
     const payload = {

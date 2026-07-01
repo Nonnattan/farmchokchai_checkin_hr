@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Farm Chokchai Login</title>
+    <title>ฟาร์มโชคชัย - เข้าสู่ระบบ</title>
     <link rel="stylesheet" href="./assets/styles.css" />
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
@@ -36,7 +36,7 @@
         <div class="auth-card">
           <div class="hero">
             <span class="hero-badge">Firebase Login • Firestore role</span>
-            <h1>Farm Chokchai Check-in</h1>
+            <h1>ฟาร์มโชคชัย เช็คอิน</h1>
             <p>ล็อกอินด้วย Firebase Authentication แล้วอ่าน role จาก Firestore collection <b>users</b> โดยดูจาก doc id = uid หรือ email ที่ตรงกับผู้ใช้</p>
             <div class="helper-box">
               <div><b>masteradmin</b> = หลังล็อกอินไปหน้า Users เพื่อจัดการ role</div>
@@ -56,15 +56,15 @@
 
             <div class="login-grid">
               <div class="field">
-                <label>Email</label>
+                <label>อีเมล</label>
                 <input v-model="email" type="email" placeholder="name@example.com" autocomplete="username" />
               </div>
               <div class="field">
-                <label>Password</label>
+                <label>รหัสผ่าน</label>
                 <input v-model="password" type="password" placeholder="••••••••" autocomplete="current-password" />
               </div>
               <button class="btn primary" :disabled="loading" @click="login">
-                {{ loading ? 'กำลังเข้าสู่ระบบ...' : 'Login' }}
+                {{ loading ? 'กำลังเข้าสู่ระบบ...' : 'เข้าสู่ระบบ' }}
               </button>
             </div>
 

@@ -129,16 +129,16 @@ const { createApp, computed, onMounted, ref, nextTick } = Vue;
         <div class="brand">
           <div class="brand-badge">AU</div>
           <div>
-            <h1>Admin / Location Check</h1>
+            <h1>แอดมิน / ตรวจสอบตำแหน่ง</h1>
             <p>หน้านี้เก็บไว้สำหรับแอดมินตรวจดูสถานะและพื้นที่อนุญาต</p>
           </div>
         </div>
         <div class="nav">
-          <a href="./index.html">QR Login</a>
-          <a href="./user/checkin.html">User</a>
-          <a class="active" href="./auth.html">Admin</a>
-          <a href="./settings.html">Settings</a>
-          <a href="./logs.html">Logs</a>
+          <a href="./index.html">เข้าสู่ระบบ</a>
+          <a href="./user/checkin.html">ผู้ใช้</a>
+          <a class="active" href="./auth.html">แอดมิน</a>
+          <a href="./settings.html">ตั้งค่า</a>
+          <a href="./logs.html">บันทึก</a>
         </div>
       </div>
 
@@ -165,8 +165,8 @@ const { createApp, computed, onMounted, ref, nextTick } = Vue;
           </div>
 
           <div class="grid">
-            <div class="span-6 field"><label>Current Lat</label><div class="code">{{ currentLocation ? common.formatNumber(currentLocation.lat) : '-' }}</div></div>
-            <div class="span-6 field"><label>Current Lng</label><div class="code">{{ currentLocation ? common.formatNumber(currentLocation.lng) : '-' }}</div></div>
+            <div class="span-6 field"><label>ละติจูดปัจจุบัน</label><div class="code">{{ currentLocation ? common.formatNumber(currentLocation.lat) : '-' }}</div></div>
+            <div class="span-6 field"><label>ลองจิจูดปัจจุบัน</label><div class="code">{{ currentLocation ? common.formatNumber(currentLocation.lng) : '-' }}</div></div>
           </div>
 
           <div class="card" style="padding:16px;background:#fafbff;border-style:dashed">
@@ -176,11 +176,11 @@ const { createApp, computed, onMounted, ref, nextTick } = Vue;
         </section>
 
         <aside class="card span-6 stack">
-          <h2>Map</h2>
+          <h2>แผนที่</h2>
           <div class="map-shell">
             <div class="map-hint">
               <div class="map-label">พื้นที่สีเขียว = เช็กอินได้</div>
-              <div class="pill success">Boundary</div>
+              <div class="pill success">ขอบเขตพื้นที่</div>
             </div>
             <div class="map-wrap"><div ref="mapEl" class="map"></div></div>
           </div>
@@ -188,12 +188,12 @@ const { createApp, computed, onMounted, ref, nextTick } = Vue;
 
         <section class="card full">
           <div class="grid">
-            <div class="span-3 field"><label>Center Latitude</label><div class="code">{{ common.formatNumber(config.centerLat) }}</div></div>
-            <div class="span-3 field"><label>Center Longitude</label><div class="code">{{ common.formatNumber(config.centerLng) }}</div></div>
-            <div class="span-3 field"><label>North</label><div class="code">{{ common.formatNumber(boundary.maxLat) }}</div></div>
-            <div class="span-3 field"><label>South</label><div class="code">{{ common.formatNumber(boundary.minLat) }}</div></div>
-            <div class="span-3 field"><label>East</label><div class="code">{{ common.formatNumber(boundary.maxLng) }}</div></div>
-            <div class="span-3 field"><label>West</label><div class="code">{{ common.formatNumber(boundary.minLng) }}</div></div>
+            <div class="span-3 field"><label>ละติจูดศูนย์กลาง</label><div class="code">{{ common.formatNumber(config.centerLat) }}</div></div>
+            <div class="span-3 field"><label>ลองจิจูดศูนย์กลาง</label><div class="code">{{ common.formatNumber(config.centerLng) }}</div></div>
+            <div class="span-3 field"><label>ทิศเหนือ</label><div class="code">{{ common.formatNumber(boundary.maxLat) }}</div></div>
+            <div class="span-3 field"><label>ทิศใต้</label><div class="code">{{ common.formatNumber(boundary.minLat) }}</div></div>
+            <div class="span-3 field"><label>ทิศตะวันออก</label><div class="code">{{ common.formatNumber(boundary.maxLng) }}</div></div>
+            <div class="span-3 field"><label>ทิศตะวันตก</label><div class="code">{{ common.formatNumber(boundary.minLng) }}</div></div>
           </div>
         </section>
       </div>

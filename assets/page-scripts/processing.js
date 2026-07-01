@@ -66,9 +66,9 @@ const { createApp, onMounted, ref } = Vue;
               <h1 class="title">{{ status }}</h1>
               <p class="muted">{{ detail }}</p>
               <div v-if="lastCheckin" class="detail-box small">
-                <div><b>Name:</b> {{ lastCheckin.name || '-' }}</div>
-                <div><b>Email:</b> {{ lastCheckin.email || '-' }}</div>
-                <div><b>Time:</b> {{ common.formatDate(lastCheckin.time) }}</div>
+                <div><b>ชื่อ:</b> {{ lastCheckin.name || '-' }}</div>
+                <div><b>อีเมล:</b> {{ lastCheckin.email || '-' }}</div>
+                <div><b>เวลา:</b> {{ common.formatDate(lastCheckin.time) }}</div>
               </div>
               <a class="btn" href="./user/checkin.html">กลับไปหน้าเช็กอิน</a>
             </div>

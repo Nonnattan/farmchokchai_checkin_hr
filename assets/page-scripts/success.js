@@ -38,7 +38,7 @@ const { createApp, ref, onMounted } = Vue;
               <p class="muted" style="margin:0 0 8px;font-size:14px;">ระบบเช็กอินเสร็จสมบูรณ์แล้ว</p>
               <div v-if="lastCheckin" class="row muted" style="font-size:14px;">
                 <div>ชื่อ: {{ lastCheckin.name || '-' }}</div>
-                <div v-if="lastCheckin.email">Email: {{ lastCheckin.email }}</div>
+                <div v-if="lastCheckin.email">อีเมล: {{ lastCheckin.email }}</div>
                 <div>เวลา: {{ lastCheckin.timeText || common.formatDate(lastCheckin.time) }}</div>
               </div>
               <a class="btn" href="./user/checkin.html">เช็กอินอีกครั้ง</a>

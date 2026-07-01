@@ -192,7 +192,7 @@ function doPost(e) {
 
     // ตรวจสอบว่ามีข้อมูลส่งมาหรือไม่
     if (!e.postData || !e.postData.contents) {
-      throw new Error("No payload provided");
+      throw new Error("ไม่พบข้อมูลที่ส่งมา");
     }
 
     const payload = JSON.parse(e.postData.contents);
@@ -317,8 +317,37 @@ function generateUniqueQrCode(existingIds) {
   return candidate;
 }
 
-function saveLocation(payload) {
+/**
+ * Ensure Location sheet has all required columns
+ * Task 5: Automatically create the Accuracy column if it doesn't exist
+ */
+function ensureLocationSheetSchema() {
   const sheet = getSheetByNameOrCreate("location");
+  const data = sheet.getDataRange().getValues();
+
+  if (data.length === 0) {
+    // Sheet is empty, create headers
+    sheet.appendRow(AREA_HEADERS);
+    return sheet;
+  }
+
+  const headers = data[0].map((h) => String(h || "").trim());
+
+  // Find missing columns from AREA_HEADERS
+  const existing = new Set(headers.filter(Boolean));
+  const missing = AREA_HEADERS.filter((h) => !existing.has(h));
+
+  // Add missing columns at the end
+  if (missing.length > 0) {
+    sheet.getRange(1, headers.length + 1, 1, missing.length).setValues([missing]);
+  }
+
+  return sheet;
+}
+
+function saveLocation(payload) {
+  // Task 5: Ensure Location sheet has all required columns (including maxAccuracy)
+  const sheet = ensureLocationSheetSchema();
   const data = sheet.getDataRange().getValues();
 
   // โครงสร้าง Header ของชีต location (ตรงกับ Google Sheet จริง)
@@ -326,10 +355,6 @@ function saveLocation(payload) {
     data.length > 0
       ? data[0]
       : AREA_HEADERS;
-
-  if (data.length === 0) {
-    sheet.appendRow(headers);
-  }
 
   const qrCodeColIndex = headers.indexOf("qr_code");
 
@@ -550,7 +575,7 @@ function saveUser(payload) {
   const targetUid = String(payload.uid || "").trim();
 
   if (!targetEmail && !targetUid)
-    throw new Error("Missing user identification (email/uid)");
+    throw new Error("ไม่พบข้อมูลระบุตัวตนผู้ใช้");
 
   let rowIndex = -1;
   const emailColIdx = headers.indexOf("email");
@@ -602,7 +627,7 @@ function deleteUser(payload) {
   const targetUid = String(payload.uid || "").trim();
 
   if (!targetEmail && !targetUid)
-    throw new Error("Missing user identification for deletion");
+    throw new Error("ไม่พบข้อมูลระบุตัวตนสำหรับการลบ");
 
   const sheet = getSheetByNameOrCreate("users");
   const data = sheet.getDataRange().getValues();
@@ -1075,7 +1100,7 @@ function saveLog(payload) {
   sheet.appendRow(rowData);
   return {
     ok: true,
-    message: "Log saved successfully",
+    message: "บันทึกข้อมูลสำเร็จ",
     userId: resolvedUserId,
     displayName: resolvedDisplayName,
   };

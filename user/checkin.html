@@ -6,7 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title>LINE Check-in</title>
+    <title>LINE เช็คอิน</title>
 
     <link rel="stylesheet" href="../assets/styles.css" />
     <link
@@ -303,17 +303,31 @@
           <div class="status-box" :class="statusType">
             <p class="status-main">{{ message }}</p>
             <p class="status-sub">{{ subMessage }}</p>
-            <div v-if="currentAccuracy !== null" class="accuracy-display">
-              <b>GPS Accuracy:</b> {{ currentAccuracy.toFixed(1) }}m (ต้องน้อยกว่า {{ maxAccuracy }}m)
+            <div class="accuracy-display">
+              <div v-if="currentLat !== null && currentLng !== null">
+                <b>ละติจูด :</b> {{ currentLat.toFixed(6) }}
+              </div>
+              <div v-if="currentLat !== null && currentLng !== null">
+                <b>ลองจิจูด :</b> {{ currentLng.toFixed(6) }}
+              </div>
+              <div v-if="currentAccuracy !== null">
+                <b>ความแม่นยำ GPS :</b> {{ currentAccuracy.toFixed(1) }} เมตร
+              </div>
+              <div v-if="readingCount > 0" style="margin-top: 4px;">
+                <b>ตรวจสอบแล้ว :</b> {{ readingCount }} / 10 ครั้ง
+              </div>
+              <div style="margin-top: 4px;">
+                <b>สถานะ :</b> {{ message }}
+              </div>
             </div>
           </div>
 
           <button
             class="btn-massive"
-            @click="startCheckInFlow"
-            :disabled="loading || authState === 'logged_out'"
+            @click="confirmCheckIn"
+            :disabled="loading || authState === 'checking' || authState === 'logged_out' || samplingInProgress"
           >
-            <span v-if="loading" class="mini-spinner"></span>
+            <span v-if="loading || samplingInProgress" class="mini-spinner"></span>
             {{ dynamicButtonText }}
           </button>
 
@@ -325,7 +339,7 @@
                 <h2>📍 ตำแหน่งของคุณ</h2>
                 <p>แสดงพื้นที่ที่ยอมรับเช็กอิน (สีน้ำเงิน) และตำแหน่งปัจจุบัน</p>
               </div>
-              <span class="map-badge">Live Map</span>
+              <span class="map-badge">แผนที่สด</span>
             </div>
             <div class="map-wrap">
               <div ref="mapEl" class="map"></div>
