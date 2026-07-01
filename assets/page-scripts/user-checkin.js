@@ -330,7 +330,7 @@ window.addEventListener("pageshow", (event) => {
                     setStatus(
                       "loading",
                       `กำลังเช็กตำแหน่งพิกัด (ครั้งที่ ${sampleCount} จาก ${MAX_SAMPLES})...`,
-                      `ความแม่นยำ: ${accuracy.toFixed(1)} เมตร (ต้องน้อยกว่า ${MAX_ACCURACY} เมตร)`,
+                      `ความแม่นยำ: ${accuracy.toFixed(1)} เมตร (ต้องน้อยกว่า 15 เมตร เพื่อความแม่นยำสูงสุด)`,
                     );
 
                     // ถ้า Accuracy ดีกว่า 10 เมตร ให้ผ่านทันที (ไม่ต้องรอครบ 3 ครั้ง)
@@ -433,7 +433,7 @@ window.addEventListener("pageshow", (event) => {
                     setStatus(
                       "loading",
                       `กำลังเช็กตำแหน่งพิกัด (รอสัญญาณที่ดีขึ้น)...`,
-                      `ความแม่นยำปัจจุบัน: ${accuracy.toFixed(1)} เมตร (ต้องน้อยกว่า ${MAX_ACCURACY} เมตร)`,
+                      `ความแม่นยำปัจจุบัน: ${accuracy.toFixed(1)} เมตร (พื้นที่นี้กำหนดไว้ไม่เกิน ${maxAccuracy.value} เมตร)`,
                     );
                   }
                 },

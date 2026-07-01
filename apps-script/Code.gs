@@ -394,6 +394,7 @@ function saveLocation(payload) {
     if (h === "remark") val = payload.areaName || payload.remark || payload.note || "";
     if (h === "assign") val = payload.assign || payload.visibleRoles || "";
     if (h === "email") val = payload.email || payload.visibleUsers || "";
+    if (h === "maxAccuracy") val = payload.maxAccuracy || "";
 
     rowData.push(val);
     savedObj[h] = val;
@@ -966,11 +967,6 @@ function validateGeofence(payload) {
 
   if (isNaN(lat) || isNaN(lng)) return { ok: false, err: "พิกัดไม่ถูกต้อง" };
   
-  // ปฏิเสธพิกัดที่คลาดเคลื่อนสูงเกินไป โดยใช้ค่า maxAccuracy จาก Config (ค่าเริ่มต้น 30 เมตร)
-  // เพื่อป้องกันการ "กระโดด" ของ GPS นอกพื้นที่
-  const maxAccuracy = Number(payload.maxAccuracy || 30);
-  if (accuracy > maxAccuracy) return { ok: false, err: "สัญญาณ GPS ไม่เสถียร (Accuracy: " + accuracy.toFixed(1) + "m ต้องน้อยกว่า " + maxAccuracy + "m) กรุณายืนในที่โล่งแล้วลองใหม่" };
-
   const areas = getSheetDataAsObjects("location");
   // ค้นหาพื้นที่โดยเน้นที่ areaId หรือ qr_code (รองรับ Legacy)
   let area = areas.find(a => {
@@ -981,6 +977,18 @@ function validateGeofence(payload) {
   // ถ้าไม่พบพื้นที่ ให้ใช้ค่า default
   if (!area) {
     area = DEFAULT_AREA;
+  }
+
+  // ปฏิเสธพิกัดที่คลาดเคลื่อนสูงเกินไป โดยใช้ค่า maxAccuracy จาก Config พื้นที่นั้นๆ (ถ้าไม่มีใช้ 30 เมตร)
+  // เพื่อป้องกันการ "กระโดด" ของ GPS นอกพื้นที่
+  const areaMaxAcc = Number(area.maxAccuracy || payload.maxAccuracy || 30);
+  if (accuracy > areaMaxAcc) {
+    return { 
+      ok: false, 
+      err: "สัญญาณ GPS ไม่เสถียร (ความแม่นยำปัจจุบัน: " + accuracy.toFixed(1) + "m) " +
+           "พื้นที่นี้กำหนดไว้ไม่เกิน " + areaMaxAcc + "m " +
+           "กรุณายืนในที่โล่งหรือขยับห่างจากอาคารแล้วลองใหม่" 
+    };
   }
 
   const centerLat = Number(area.lat || area.centerLat);
@@ -1004,12 +1012,15 @@ function validateGeofence(payload) {
   const lngDeltaEast = east / (111320 * cosLat);
   const lngDeltaWest = west / (111320 * cosLat);
 
-  const minLat = centerLat - latDeltaSouth;
-  const maxLat = centerLat + latDeltaNorth;
-  const minLng = centerLng - lngDeltaWest;
-  const maxLng = centerLng + lngDeltaEast;
+  // เพิ่มการอนุโลม (tolerance) 2 เมตร เพื่อให้ตรงกับฝั่ง frontend และลดปัญหาขอบเขตเป๊ะเกินไป
+  const tolerance = 2 / 111320;
 
-  // เช็คแบบเข้มงวด: ต้องอยู่ในกรอบพอดี ไม่มี <= / >= บวกเพิ่มระยะใดๆ ทั้งสิ้น
+  const minLat = centerLat - latDeltaSouth - tolerance;
+  const maxLat = centerLat + latDeltaNorth + tolerance;
+  const minLng = centerLng - lngDeltaWest - tolerance;
+  const maxLng = centerLng + lngDeltaEast + tolerance;
+
+  // เช็คแบบอนุโลมเล็กน้อย: ต้องอยู่ในกรอบ + tolerance
   const isInside = lat >= minLat && lat <= maxLat &&
                      lng >= minLng && lng <= maxLng;
 

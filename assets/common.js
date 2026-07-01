@@ -117,6 +117,7 @@
       visibleUsers: String(source.email ?? source.visibleUsers ?? source.allowedUsers ?? "").trim(),
       assign: String(source.assign ?? source.visibleRoles ?? DEFAULT_AREA.visibleRoles).trim() || DEFAULT_AREA.visibleRoles,
       email: String(source.email ?? source.visibleUsers ?? source.allowedUsers ?? "").trim(),
+      maxAccuracy: toNumberOr(source.maxAccuracy, DEFAULT_AREA.maxAccuracy || 30),
       updatedAt: String(source.updatedAt || "").trim(),
       updatedBy: String(source.updatedBy || "").trim(),
     };
@@ -380,14 +381,16 @@
   // ⚠️ ตรวจสอบขอบเขตแบบเข้มงวด ไม่มีการอนุโลมระยะทางใดๆ ทั้งสิ้น (ห้ามบวกเพิ่มบัฟเฟอร์ เช่น +5.5 เมตร หรือใช้ accuracy มาขยายขอบเขตเด็ดขาด)
   // ผู้ใช้ต้องอยู่ในกรอบสี่เหลี่ยมจริงเท่านั้นถึงจะเช็กอินผ่าน ฝั่ง server (Code.gs validateGeofence) ก็ใช้กฎเดียวกันนี้
   function isInsideBoundary(lat, lng, boundary) {
-    // ⚠️ ตรวจสอบขอบเขตแบบเข้มงวดที่สุด (Strict Boundary)
-    // ตัดบัฟเฟอร์ออกทั้งหมด เพื่อให้มั่นใจว่าผู้ใช้ต้องอยู่ในกรอบจริง
     if (!boundary || !lat || !lng) return false;
     
-    const isInside = lat >= boundary.minLat &&
-                    lat <= boundary.maxLat &&
-                    lng >= boundary.minLng &&
-                    lng <= boundary.maxLng;
+    // เพิ่มการอนุโลม (tolerance) 2 เมตร สำหรับการเช็คอินผ่านมือถือ
+    // เพื่อลดปัญหาขอบเขตสี่เหลี่ยมที่ตัดเป๊ะเกินไปเมื่อเทียบกับความคลาดเคลื่อนของ GPS
+    const tolerance = 2 / 111320; 
+
+    const isInside = lat >= (boundary.minLat - tolerance) &&
+                    lat <= (boundary.maxLat + tolerance) &&
+                    lng >= (boundary.minLng - tolerance) &&
+                    lng <= (boundary.maxLng + tolerance);
                     
     return isInside;
   }
