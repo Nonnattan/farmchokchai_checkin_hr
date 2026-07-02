@@ -137,14 +137,25 @@
     });
   }
 
+  // ดีดไปหน้า login (index.html) พร้อมจำ path ปัจจุบันไว้ใน query "redirect"
+  // เพื่อให้ login.js พากลับมาหน้าเดิมได้หลังล็อกอินสำเร็จ
+  function redirectToLogin() {
+    try {
+      const current = location.pathname + location.search + location.hash;
+      window.location.replace("./index.html?redirect=" + encodeURIComponent(current));
+    } catch (e) {
+      window.location.replace("./index.html");
+    }
+  }
+
   async function requireRole(allowedRoles, redirectTo = "./index.html") {
     const session = await currentSession(false);
     if (!session) {
-      window.location.replace(redirectTo);
+      redirectToLogin();
       return null;
     }
     if (session.active === false) {
-      window.location.replace(redirectTo);
+      redirectToLogin();
       return null;
     }
     const allowed = Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles];
@@ -166,5 +177,6 @@
     onStateChanged,
     requireRole,
     homeRoute,
+    redirectToLogin,
   };
 })();

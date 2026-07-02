@@ -106,7 +106,7 @@ createApp({
       try {
         const sessionInfo = await FirebaseRole.currentSession(false);
         if (!sessionInfo) {
-          location.replace("./index.html");
+          FirebaseRole.redirectToLogin();
           return;
         }
         session.value = sessionInfo;

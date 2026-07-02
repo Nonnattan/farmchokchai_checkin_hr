@@ -38,6 +38,9 @@
       .gps-map-wrap { height: 600px; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); background: #eef2ff; position: sticky; top: 24px; }
       .gps-map { width: 100%; height: 100%; }
       .gps-grid-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .gps-reading-counter { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; padding: 10px 14px; border-radius: 12px; background: #eef2ff; border: 1px solid #c7d2fe; }
+      .gps-reading-counter-label { font-size: 13px; font-weight: 600; color: #3730a3; }
+      .gps-reading-counter-value { font-size: 18px; font-weight: 800; color: #2563eb; }
       .gps-boundary-info { background: #f0f4ff; padding: 12px; border-radius: 10px; border-left: 4px solid #2563eb; }
       .gps-boundary-info .gps-label { margin-bottom: 6px; }
       .gps-boundary-info .gps-value { font-size: 18px; }
@@ -46,8 +49,33 @@
         .gps-map-wrap { height: 400px; position: static; } 
       }
       @media (max-width: 768px) {
-        .gps-grid-2col { grid-template-columns: 1fr; }
-        .gps-map-wrap { height: 350px; }
+        /* ให้ "ความแม่นยำ" กับ "ระยะห่าง" อยู่แถวเดียวกันแม้บนมือถือ (ไม่บังคับเรียงเป็น 1 คอลัมน์) */
+        /* มือถือ: ให้เห็นแผนที่ + lat/lng/accuracy/ระยะห่าง (เมตร) พร้อมกันโดยไม่ต้องเลื่อนจอ
+           วิธีทำ: ปักแผนที่ไว้บนสุดแบบ sticky (ลดความสูงลง) แล้วดันบล็อกพิกัด/ความแม่นยำ
+           ให้ตามมาติดๆ ด้วย order ส่วนตัวเลือกพื้นที่/ขอบเขต/ปุ่มทดสอบ (ตั้งค่าแค่ครั้งเดียว)
+           ให้อยู่ถัดไปด้านล่าง เลื่อนดูได้ตามปกติ */
+        .gps-test-grid { display: flex; flex-direction: column; }
+        .gps-control-panel { display: contents; }
+
+        .gps-map-wrap {
+          order: -2;
+          position: sticky;
+          top: 8px;
+          z-index: 5;
+          height: 34vh;
+          min-height: 190px;
+          max-height: 280px;
+        }
+
+        .gps-section-position { order: -1; }
+        .gps-section-accuracy { order: 0; }
+        .gps-section-area { order: 1; }
+        .gps-section-boundary { order: 2; }
+        .gps-section-action { order: 3; }
+
+        .gps-info-section { padding: 14px; }
+        .gps-info-section h3 { font-size: 14px; margin-bottom: 10px; }
+        .gps-value { font-size: 17px; }
       }
     </style>
   </head>
@@ -72,7 +100,7 @@
             <!-- Control Panel -->
             <div class="gps-control-panel">
               <!-- Area Selection -->
-              <div class="gps-info-section">
+              <div class="gps-info-section gps-section-area">
                 <h3>เลือกพื้นที่ทดสอบ</h3>
                 <select v-model="selectedAreaId" class="gps-select-area" @change="onAreaChange">
                   <option v-for="a in areas" :key="a.areaId" :value="a.areaId">{{ a.areaName }}</option>
@@ -80,7 +108,7 @@
               </div>
 
               <!-- Current Position Status -->
-              <div class="gps-info-section">
+              <div class="gps-info-section gps-section-position">
                 <h3>สถานะพิกัดปัจจุบัน</h3>
                 <div v-if="currentLat" class="gps-info-item">
                   <div class="gps-label">พิกัด (Latitude, Longitude)</div>
@@ -94,7 +122,7 @@
               </div>
 
               <!-- Accuracy & Distance -->
-              <div class="gps-info-section">
+              <div class="gps-info-section gps-section-accuracy">
                 <h3>ข้อมูลความแม่นยำ</h3>
                 <div class="gps-grid-2col">
                   <div class="gps-info-item">
@@ -109,10 +137,14 @@
                     <div class="gps-value">{{ currentDistance ? currentDistance.toFixed(1) + ' m' : '-' }}</div>
                   </div>
                 </div>
+                <div class="gps-reading-counter">
+                  <span class="gps-reading-counter-label">อ่านค่า GPS แล้ว</span>
+                  <span class="gps-reading-counter-value">{{ readingCount }}/5</span>
+                </div>
               </div>
 
               <!-- Boundary Info -->
-              <div class="gps-info-section">
+              <div class="gps-info-section gps-section-boundary">
                 <h3>ขอบเขตพื้นที่</h3>
                 <div class="gps-boundary-info">
                   <div class="gps-label">North / South / East / West</div>
@@ -121,13 +153,13 @@
               </div>
 
               <!-- Test Button -->
-              <div class="gps-info-section">
+              <div class="gps-info-section gps-section-action">
                 <button 
                   class="gps-btn-test" 
                   @click="startTest" 
                   :disabled="samplingInProgress"
                 >
-                  <span v-if="samplingInProgress">กำลังสุ่มพิกัด ({{ readingCount }}/5)...</span>
+                  <span v-if="samplingInProgress">กำลังสุ่มพิกัด...</span>
                   <span v-else>🚀 เริ่มทดสอบ GPS ณ จุดนี้</span>
                 </button>
                 <div class="gps-note">
@@ -151,7 +183,7 @@
         
         <div v-else class="text-center py-20">
           <p class="text-error mb-4">กรุณาล็อกอินด้วยบัญชี Master Admin เพื่อใช้งานหน้านี้</p>
-          <a href="./auth.html" class="btn btn-primary">ไปหน้าล็อกอิน</a>
+          <a href="./index.html" class="btn btn-primary">ไปหน้าล็อกอิน</a>
         </div>
       </div>
     </script>

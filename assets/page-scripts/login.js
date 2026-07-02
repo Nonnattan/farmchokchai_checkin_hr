@@ -10,6 +10,14 @@ createApp({
     const role = ref("");
 
     function goHome(session) {
+      // ถ้ามาจากการถูกดีดออกจากหน้าอื่น (เช่น gpstest.html) เพราะยังไม่ได้ login
+      // ให้พากลับไปหน้าเดิมนั้นแทนที่จะไปตาม role เสมอ
+      // (จำกัดเฉพาะ path ภายในเว็บนี้เท่านั้น เพื่อกัน open redirect)
+      const redirect = new URLSearchParams(location.search).get("redirect");
+      if (redirect && /^\/(?!\/)/.test(redirect)) {
+        location.replace(redirect);
+        return;
+      }
       const target = FirebaseRole.homeRoute(session?.role);
       location.replace(target);
     }

@@ -330,7 +330,7 @@
           }
           const session = await roleApi.currentSession(false);
           if (!session) {
-            location.replace("./index.html");
+            roleApi.redirectToLogin();
             return null;
           }
           if (session.role !== "masteradmin") {

@@ -37,7 +37,12 @@ createApp({
     async function initAuth() {
       try {
         const info = await FirebaseRole.currentSession(false);
-        if (!info || info.role !== "masteradmin") {
+        if (!info) {
+          // ยังไม่ได้ login เลย -> ดีดไปหน้า login แล้วพากลับมาหน้านี้หลังล็อกอินสำเร็จ
+          FirebaseRole.redirectToLogin();
+          return;
+        }
+        if (info.role !== "masteradmin") {
           authState.value = "unauthorized";
           return;
         }
@@ -139,10 +144,18 @@ createApp({
 
     function startTest() {
       if (samplingInProgress.value) return;
-      
+
       samplingInProgress.value = true;
       readingCount.value = 0;
       const readings = [];
+
+      const MAX_READINGS = 5;
+      const READING_INTERVAL = 2000; // 2 วินาที — logic เดียวกับ user/checkin.html
+      const samplingStartTime = Date.now();
+      // เริ่มนับ lastAcceptedAt จากเวลาที่กดปุ่ม เพื่อให้ค่าแรก (1/5) ก็ต้องรอครบ 2 วิเหมือนค่าที่เหลือ
+      // (ไม่ปล่อยให้ค่าแรกเข้าทันทีที่หาสัญญาณ GPS เจอ ซึ่งเวลาจะไม่แน่นอน)
+      let lastAcceptedAt = samplingStartTime;
+      let readingsCollected = 0;
 
       const watchId = navigator.geolocation.watchPosition(
         (pos) => {
@@ -150,21 +163,31 @@ createApp({
           const lng = pos.coords.longitude;
           const acc = pos.coords.accuracy;
 
+          // อัปเดตตำแหน่งบนแผนที่/ตัวเลขสดทุกครั้งที่มีสัญญาณใหม่เข้ามา ไม่ต้องรอครบ 2 วิ
           updateCurrentPosition(lat, lng, acc);
 
-          if (readingCount.value < 5) {
-            readings.push({ lat, lng, accuracy: acc });
-            readingCount.value++;
-            
-            if (readingCount.value >= 5) {
-              navigator.geolocation.clearWatch(watchId);
-              samplingInProgress.value = false;
-              
-              const best = selectBestGPS(readings);
-              if (best) {
-                updateCurrentPosition(best.lat, best.lng, best.accuracy);
-                alert(`ทดสอบเสร็จสิ้น!\nจุดที่ดีที่สุด: ${best.lat.toFixed(6)}, ${best.lng.toFixed(6)}\nความแม่นยำ: ${best.accuracy.toFixed(1)} เมตร\nสถานะ: ${isInside.value ? 'อยู่ในพื้นที่' : 'อยู่นอกพื้นที่'}`);
-              }
+          if (readingsCollected >= MAX_READINGS) return;
+
+          const now = Date.now();
+          if (now - lastAcceptedAt < READING_INTERVAL) {
+            // ยังไม่ครบ 2 วินาทีนับจากค่าก่อนหน้า (หรือจากตอนกดปุ่มสำหรับค่าแรก) ข้ามค่านี้ไปก่อน
+            return;
+          }
+          lastAcceptedAt = now;
+
+          readings.push({ lat, lng, accuracy: acc });
+          readingsCollected++;
+          readingCount.value = readingsCollected;
+
+          if (readingsCollected >= MAX_READINGS) {
+            navigator.geolocation.clearWatch(watchId);
+            samplingInProgress.value = false;
+
+            // หน้านี้ไว้ทดสอบเฉยๆ ไม่บันทึก/ส่งข้อมูลเช็คอินใดๆ ทั้งสิ้น
+            const best = selectBestGPS(readings);
+            if (best) {
+              updateCurrentPosition(best.lat, best.lng, best.accuracy);
+              alert(`ทดสอบเสร็จสิ้น!\nจุดที่ดีที่สุด: ${best.lat.toFixed(6)}, ${best.lng.toFixed(6)}\nความแม่นยำ: ${best.accuracy.toFixed(1)} เมตร\nสถานะ: ${isInside.value ? 'อยู่ในพื้นที่' : 'อยู่นอกพื้นที่'}`);
             }
           }
         },

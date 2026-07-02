@@ -135,7 +135,7 @@ createApp({
       session.value = s;
 
       if (!s) {
-        location.replace("./index.html");
+        FirebaseRole.redirectToLogin();
         return false;
       }
 

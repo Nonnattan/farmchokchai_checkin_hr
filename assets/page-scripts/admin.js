@@ -135,7 +135,7 @@ createApp({
         const info = await FirebaseRole.currentSession(false);
 
         if (!info) {
-          location.replace("./index.html");
+          FirebaseRole.redirectToLogin();
           return;
         }
 
