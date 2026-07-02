@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GPS Test System</title>
+    <link rel="stylesheet" href="./assets/styles.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+    <script src="./assets/firebase-config.js"></script>
+    <script src="./assets/common.js"></script>
+    <script src="./assets/components/nav-tabs.js"></script>
+    <script src="./assets/firebase-auth.js"></script>
+    <style>
+      .gps-test-grid { display: grid; grid-template-columns: 1fr 1.3fr; gap: 24px; }
+      .gps-control-panel { display: grid; gap: 20px; }
+      .gps-info-section { background: #fff; padding: 20px; border-radius: 16px; border: 1px solid var(--line); }
+      .gps-info-section h3 { margin: 0 0 16px; font-size: 16px; font-weight: 700; color: #0f172a; }
+      .gps-info-item { background: #f8fafc; padding: 14px; border-radius: 12px; margin-bottom: 12px; border: 1px solid #e2e8f0; }
+      .gps-info-item:last-child { margin-bottom: 0; }
+      .gps-label { font-size: 12px; color: #64748b; text-transform: uppercase; font-weight: 700; margin-bottom: 4px; }
+      .gps-value { font-size: 20px; font-weight: 700; color: #0f172a; }
+      .gps-status-badge { display: inline-flex; padding: 6px 12px; border-radius: 999px; font-weight: 800; font-size: 12px; margin-top: 8px; }
+      .gps-status-inside { background: #ecfdf3; color: #027a48; }
+      .gps-status-outside { background: #fef2f2; color: #b91c1c; }
+      .gps-accuracy-indicator { font-size: 12px; margin-top: 6px; font-weight: 600; }
+      .gps-accuracy-good { color: #10b981; }
+      .gps-accuracy-poor { color: #ef4444; }
+      .gps-select-area { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #d0d5dd; margin-bottom: 16px; font-size: 16px; background: #fff; }
+      .gps-btn-test { width: 100%; padding: 14px; border-radius: 12px; background: #2563eb; color: #fff; font-weight: 700; border: none; cursor: pointer; transition: all 0.2s; font-size: 16px; }
+      .gps-btn-test:hover:not(:disabled) { background: #1d4ed8; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3); }
+      .gps-btn-test:disabled { background: #94a3b8; cursor: not-allowed; }
+      .gps-note { font-size: 12px; color: #64748b; margin-top: 12px; text-align: center; line-height: 1.5; }
+      .gps-map-wrap { height: 600px; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); background: #eef2ff; position: sticky; top: 24px; }
+      .gps-map { width: 100%; height: 100%; }
+      .gps-grid-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .gps-boundary-info { background: #f0f4ff; padding: 12px; border-radius: 10px; border-left: 4px solid #2563eb; }
+      .gps-boundary-info .gps-label { margin-bottom: 6px; }
+      .gps-boundary-info .gps-value { font-size: 18px; }
+      @media (max-width: 1100px) { 
+        .gps-test-grid { grid-template-columns: 1fr; } 
+        .gps-map-wrap { height: 400px; position: static; } 
+      }
+      @media (max-width: 768px) {
+        .gps-grid-2col { grid-template-columns: 1fr; }
+        .gps-map-wrap { height: 350px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <script type="text/x-template" id="gpstest-template">
+      <div class="container">
+        <div class="topbar">
+          <div class="brand">
+            <div class="brand-badge">GPS</div>
+            <div>
+              <h1>GPS Test System</h1>
+              <p>ทดสอบความแม่นยำและขอบเขตพื้นที่เช็คอิน</p>
+            </div>
+          </div>
+          <app-tabs :items="navItems" :show-logout="showLogout" @logout="logout" />
+        </div>
+
+        <div v-if="authState === 'logged_in'">
+          <div class="gps-test-grid">
+            <!-- Control Panel -->
+            <div class="gps-control-panel">
+              <!-- Area Selection -->
+              <div class="gps-info-section">
+                <h3>เลือกพื้นที่ทดสอบ</h3>
+                <select v-model="selectedAreaId" class="gps-select-area" @change="onAreaChange">
+                  <option v-for="a in areas" :key="a.areaId" :value="a.areaId">{{ a.areaName }}</option>
+                </select>
+              </div>
+
+              <!-- Current Position Status -->
+              <div class="gps-info-section">
+                <h3>สถานะพิกัดปัจจุบัน</h3>
+                <div v-if="currentLat" class="gps-info-item">
+                  <div class="gps-label">พิกัด (Latitude, Longitude)</div>
+                  <div class="gps-value">{{ currentLat.toFixed(7) }}, {{ currentLng.toFixed(7) }}</div>
+                  <div>
+                    <span v-if="isInside" class="gps-status-badge gps-status-inside">✓ อยู่ในกรอบเช็คอิน</span>
+                    <span v-else class="gps-status-badge gps-status-outside">✗ อยู่นอกกรอบเช็คอิน</span>
+                  </div>
+                </div>
+                <div v-else class="gps-info-item" style="color: #64748b;">ยังไม่มีข้อมูลพิกัด</div>
+              </div>
+
+              <!-- Accuracy & Distance -->
+              <div class="gps-info-section">
+                <h3>ข้อมูลความแม่นยำ</h3>
+                <div class="gps-grid-2col">
+                  <div class="gps-info-item">
+                    <div class="gps-label">ความแม่นยำ (Accuracy)</div>
+                    <div class="gps-value">{{ currentAccuracy ? currentAccuracy.toFixed(1) + ' m' : '-' }}</div>
+                    <div class="gps-accuracy-indicator" :class="currentAccuracy > maxAccuracy ? 'gps-accuracy-poor' : 'gps-accuracy-good'">
+                      Max: {{ maxAccuracy }} m
+                    </div>
+                  </div>
+                  <div class="gps-info-item">
+                    <div class="gps-label">ระยะห่างจากศูนย์กลาง</div>
+                    <div class="gps-value">{{ currentDistance ? currentDistance.toFixed(1) + ' m' : '-' }}</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Boundary Info -->
+              <div class="gps-info-section">
+                <h3>ขอบเขตพื้นที่</h3>
+                <div class="gps-boundary-info">
+                  <div class="gps-label">North / South / East / West</div>
+                  <div class="gps-value">{{ config.north }}/{{ config.south }}/{{ config.east }}/{{ config.west }} m</div>
+                </div>
+              </div>
+
+              <!-- Test Button -->
+              <div class="gps-info-section">
+                <button 
+                  class="gps-btn-test" 
+                  @click="startTest" 
+                  :disabled="samplingInProgress"
+                >
+                  <span v-if="samplingInProgress">กำลังสุ่มพิกัด ({{ readingCount }}/5)...</span>
+                  <span v-else>🚀 เริ่มทดสอบ GPS ณ จุดนี้</span>
+                </button>
+                <div class="gps-note">
+                  * ใช้ Logic เดียวกับการเช็คอินจริง<br>
+                  (สุ่ม 5 ครั้งเพื่อหาจุดที่ดีที่สุด)
+                </div>
+              </div>
+            </div>
+
+            <!-- Map Panel -->
+            <div class="gps-map-wrap">
+              <div ref="mapEl" class="gps-map"></div>
+            </div>
+          </div>
+        </div>
+
+        <div v-else-if="authState === 'checking'" class="text-center py-20">
+          <div class="spinner-lg mb-4"></div>
+          <p>กำลังตรวจสอบสิทธิ์การเข้าถึง...</p>
+        </div>
+        
+        <div v-else class="text-center py-20">
+          <p class="text-error mb-4">กรุณาล็อกอินด้วยบัญชี Master Admin เพื่อใช้งานหน้านี้</p>
+          <a href="./auth.html" class="btn btn-primary">ไปหน้าล็อกอิน</a>
+        </div>
+      </div>
+    </script>
+
+    <script src="./assets/page-scripts/gpstest.js"></script>
+  </body>
+</html>

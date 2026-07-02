@@ -3,7 +3,7 @@
   const PENDING_KEY = "pending_checkin_payload";
   const LAST_CHECKIN_KEY = "last_checkin";
   const AREA_CACHE_KEY = "checkin_area_cache";
-  const API_URL = "https://script.google.com/macros/s/AKfycbxUZE37YDlwluFxuzycJr4FOaKzC8MpXtlsJMfN0EPQ_p0PgwuZKQm1eDP392QIilBh/exec";
+  const API_URL = "https://script.google.com/macros/s/AKfycbw0xWZUEDJ1vreAM0zIWJYJcVx21Z1Nf-8MruQ3OAsNDXpPJfqPShScyxa1jViPVSQU/exec";
   const LIFF_ID = "2008594376-aBuTJTic";
 
   const DEFAULT_AREA = {
@@ -411,15 +411,12 @@
   // ผู้ใช้ต้องอยู่ในกรอบสี่เหลี่ยมจริงเท่านั้นถึงจะเช็กอินผ่าน ฝั่ง server (Code.gs validateGeofence) ก็ใช้กฎเดียวกันนี้
   function isInsideBoundary(lat, lng, boundary) {
     if (!boundary || !lat || !lng) return false;
-    
-    // เพิ่มการอนุโลม (tolerance) 2 เมตร สำหรับการเช็คอินผ่านมือถือ
-    // เพื่อลดปัญหาขอบเขตสี่เหลี่ยมที่ตัดเป๊ะเกินไปเมื่อเทียบกับความคลาดเคลื่อนของ GPS
-    const tolerance = 2 / 111320; 
 
-    const isInside = lat >= (boundary.minLat - tolerance) &&
-                    lat <= (boundary.maxLat + tolerance) &&
-                    lng >= (boundary.minLng - tolerance) &&
-                    lng <= (boundary.maxLng + tolerance);
+    // เอาค่าอนุโลมออกตามความต้องการของผู้ใช้ (เดิมมีการบวกเพิ่ม 2 เมตร)
+    const isInside = lat >= boundary.minLat &&
+      lat <= boundary.maxLat &&
+      lng >= boundary.minLng &&
+      lng <= boundary.maxLng;
 
     // Debug log: ไว้ตรวจสอบตอนมีปัญหาเช็คอินไม่ผ่านทั้งที่อยู่ในพื้นที่จริง
     // (แสดง lat/lng ที่อ่านได้, ขอบเขต/รัศมีของพื้นที่ และระยะห่างจากจุดศูนย์กลาง)
@@ -436,7 +433,6 @@
           centerLat: boundary.centerLat, centerLng: boundary.centerLng,
         },
         distanceFromCenterMeters: distanceFromCenter,
-        toleranceMeters: 2,
         isInside,
       });
     } catch (e) { /* อย่าให้ log พัง flow การเช็คอินจริง */ }
@@ -565,6 +561,7 @@
       ...adminNav,
       { key: "users", href: "./users.html", label: "Users" },
       { key: "setarea", href: "./setarea.html", label: "SetArea" },
+      { key: "gpstest", href: "./gpstest.html", label: "GPS Test" },
     ];
 
     const items =

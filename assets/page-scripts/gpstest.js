@@ -1,0 +1,197 @@
+const { createApp, computed, onMounted, ref, watch, nextTick } = Vue;
+const common = window.CheckinCommon || {};
+
+createApp({
+  template: "#gpstest-template",
+  setup() {
+    const authState = ref("checking");
+    const session = ref(null);
+    const areas = ref([]);
+    const selectedAreaId = ref("");
+    const config = ref({ ...common.DEFAULT_CONFIG });
+    const maxAccuracy = ref(30);
+    
+    const samplingInProgress = ref(false);
+    const readingCount = ref(0);
+    const currentLat = ref(null);
+    const currentLng = ref(null);
+    const currentAccuracy = ref(null);
+    const currentDistance = ref(null);
+    const isInside = ref(false);
+
+    const mapEl = ref(null);
+    let map = null;
+    let boundaryRect = null;
+    let centerMarker = null;
+    let currentMarker = null;
+    let currentCircle = null;
+
+    const boundary = computed(() => common.buildBoundary(config.value));
+    
+    const navItems = computed(() => common.getNavItems(session.value?.role || "masteradmin", "gpstest"));
+    const showLogout = computed(() => {
+      const r = String(session.value?.role || "").toLowerCase();
+      return r === "admin" || r === "masteradmin";
+    });
+
+    async function initAuth() {
+      try {
+        const info = await FirebaseRole.currentSession(false);
+        if (!info || info.role !== "masteradmin") {
+          authState.value = "unauthorized";
+          return;
+        }
+        session.value = info;
+        authState.value = "logged_in";
+        await loadAreas();
+        await nextTick();
+        initMap();
+      } catch (err) {
+        console.error(err);
+        authState.value = "error";
+      }
+    }
+
+    async function loadAreas() {
+      try {
+        const list = await common.getAreas();
+        areas.value = list;
+        if (list.length > 0) {
+          selectedAreaId.value = list[0].areaId;
+          onAreaChange();
+        }
+      } catch (err) {
+        console.error("Load areas failed", err);
+      }
+    }
+
+    function onAreaChange() {
+      const found = areas.value.find(a => a.areaId === selectedAreaId.value);
+      if (found) {
+        config.value = common.normalizeConfig(found);
+        maxAccuracy.value = config.value.maxAccuracy || 30;
+        if (map) {
+          map.setView([config.value.lat, config.value.lng], 18);
+          drawBoundary();
+        }
+      }
+    }
+
+    function initMap() {
+      if (!mapEl.value || map) return;
+      
+      map = L.map(mapEl.value).setView([config.value.lat, config.value.lng], 18);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap'
+      }).addTo(map);
+
+      drawBoundary();
+    }
+
+    function drawBoundary() {
+      if (!map) return;
+      
+      if (boundaryRect) map.removeLayer(boundaryRect);
+      if (centerMarker) map.removeLayer(centerMarker);
+
+      const b = boundary.value;
+      boundaryRect = L.rectangle(
+        [[b.minLat, b.minLng], [b.maxLat, b.maxLng]], 
+        { color: "#2563eb", weight: 2, fillOpacity: 0.1, dashArray: '5, 5' }
+      ).addTo(map);
+
+      centerMarker = L.circleMarker([config.value.lat, config.value.lng], {
+        radius: 6, color: "#2563eb", fillColor: "#2563eb", fillOpacity: 1, weight: 2
+      }).addTo(map).bindPopup("จุดศูนย์กลาง: " + config.value.areaName);
+    }
+
+    function updateCurrentPosition(lat, lng, acc) {
+      currentLat.value = lat;
+      currentLng.value = lng;
+      currentAccuracy.value = acc;
+      
+      currentDistance.value = common.calculateDistanceMeters(
+        lat, lng, config.value.lat, config.value.lng
+      );
+      
+      isInside.value = common.isInsideBoundary(lat, lng, boundary.value);
+
+      if (!map) return;
+
+      if (currentMarker) map.removeLayer(currentMarker);
+      if (currentCircle) map.removeLayer(currentCircle);
+
+      currentMarker = L.marker([lat, lng]).addTo(map);
+      currentCircle = L.circle([lat, lng], {
+        radius: acc, color: isInside.value ? "#10b981" : "#ef4444", fillOpacity: 0.1, weight: 2
+      }).addTo(map);
+    }
+
+    function selectBestGPS(readings) {
+      if (readings.length === 0) return null;
+      let bestReading = readings[0];
+      readings.forEach(r => {
+        if (r.accuracy < bestReading.accuracy) bestReading = r;
+      });
+      return bestReading;
+    }
+
+    function startTest() {
+      if (samplingInProgress.value) return;
+      
+      samplingInProgress.value = true;
+      readingCount.value = 0;
+      const readings = [];
+
+      const watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          const acc = pos.coords.accuracy;
+
+          updateCurrentPosition(lat, lng, acc);
+
+          if (readingCount.value < 5) {
+            readings.push({ lat, lng, accuracy: acc });
+            readingCount.value++;
+            
+            if (readingCount.value >= 5) {
+              navigator.geolocation.clearWatch(watchId);
+              samplingInProgress.value = false;
+              
+              const best = selectBestGPS(readings);
+              if (best) {
+                updateCurrentPosition(best.lat, best.lng, best.accuracy);
+                alert(`ทดสอบเสร็จสิ้น!\nจุดที่ดีที่สุด: ${best.lat.toFixed(6)}, ${best.lng.toFixed(6)}\nความแม่นยำ: ${best.accuracy.toFixed(1)} เมตร\nสถานะ: ${isInside.value ? 'อยู่ในพื้นที่' : 'อยู่นอกพื้นที่'}`);
+              }
+            }
+          }
+        },
+        (err) => {
+          console.error(err);
+          samplingInProgress.value = false;
+          alert("GPS Error: " + err.message);
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      );
+    }
+
+    async function logout() {
+      await FirebaseRole.signOut();
+      location.replace("./index.html");
+    }
+
+    onMounted(async () => {
+      await initAuth();
+    });
+
+    return {
+      authState, session, areas, selectedAreaId, config, maxAccuracy,
+      samplingInProgress, readingCount, currentLat, currentLng,
+      currentAccuracy, currentDistance, isInside, mapEl,
+      navItems, showLogout,
+      onAreaChange, startTest, logout
+    };
+  }
+}).mount("#app");
