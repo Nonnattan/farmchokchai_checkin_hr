@@ -628,17 +628,19 @@ createApp({
             // ต้องเก็บให้ครบ 10 ครั้งแม้ Check-in เพียงครั้งเดียว
             // ============================================================
             if (testMode) {
-              const isInsideNow = common.isInsideBoundary(lat, lng, boundary.value);
               const testPayload = buildPayload(lat, lng, accuracy);
-              testPayload.areaId = areaId;
+              // คำนวณระยะห่างจากจุดศูนย์กลางพื้นที่ (distantcenter)
+              const dist = calculateDistance(lat, lng, config.value.centerLat, config.value.centerLng);
+              
+              testPayload.distantcenter = dist;
               testPayload.sampleIndex = readingsCollected;
-              testPayload.isInsideBoundary = isInsideNow;
               testPayload.status = "test";
+              
               // บันทึกทันที (fire-and-forget ไม่รอผล ไม่บล็อก GPS sampling)
               common.addTestLog(testPayload, 30000).catch(function(err) {
                 console.warn("[TestMode] addTestLog ล้มเหลว sample", readingsCollected, err);
               });
-              console.log("[TestMode] บันทึก sample", readingsCollected, "/", MAX_READINGS, { lat, lng, accuracy, isInsideNow });
+              console.log("[TestMode] บันทึก sample", readingsCollected, "/", MAX_READINGS, { lat, lng, accuracy, distantcenter: dist });
             }
             // ============================================================
 

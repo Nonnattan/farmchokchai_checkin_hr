@@ -21,19 +21,18 @@ const LOG_HEADERS = [
 
 // Schema สำหรับ Sheet "Test" — เหมือน Logs แต่เพิ่ม sampleIndex และ areaId เพื่อระบุว่าเป็นการอ่านครั้งที่เท่าไร
 const TEST_LOG_HEADERS = [
-  "createdAt",
   "displayName",
   "email",
   "phone",
-  "site",
   "lat",
   "lng",
-  "accuracy",
+  "createdAt",
+  "site",
   "userId",
   "status",
+  "accuracy",
+  "distantcenter",
   "sampleIndex",
-  "areaId",
-  "isInsideBoundary",
 ];
 
 // ชีต Logs รุ่นเก่า (ก่อนระบบนี้) ใช้หัวคอลัมน์ชื่ออื่น — แมปชื่อเก่า -> ชื่อใหม่ที่โค้ดนี้ต้องใช้
@@ -1298,9 +1297,8 @@ function saveTestLog(payload) {
     if (h === "accuracy") return safeAccuracy;
     if (h === "userId") return resolvedUserId;
     if (h === "status") return payload.status || "test";
+    if (h === "distantcenter") return numOr(payload.distantcenter, "");
     if (h === "sampleIndex") return numOr(payload.sampleIndex, "");
-    if (h === "areaId") return payload.areaId || "";
-    if (h === "isInsideBoundary") return payload.isInsideBoundary === true ? "true" : "false";
     return "";
   });
 

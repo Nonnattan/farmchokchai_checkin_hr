@@ -187,7 +187,8 @@ createApp({
             const best = selectBestGPS(readings);
             if (best) {
               updateCurrentPosition(best.lat, best.lng, best.accuracy);
-              alert(`ทดสอบเสร็จสิ้น!\nจุดที่ดีที่สุด: ${best.lat.toFixed(6)}, ${best.lng.toFixed(6)}\nความแม่นยำ: ${best.accuracy.toFixed(1)} เมตร\nสถานะ: ${isInside.value ? 'อยู่ในพื้นที่' : 'อยู่นอกพื้นที่'}`);
+              const dist = common.calculateDistanceMeters(best.lat, best.lng, config.value.lat, config.value.lng);
+              alert(`ทดสอบเสร็จสิ้น!\nจุดที่ดีที่สุด: ${best.lat.toFixed(6)}, ${best.lng.toFixed(6)}\nความแม่นยำ: ${best.accuracy.toFixed(1)} เมตร\nระยะห่างจากศูนย์กลาง: ${dist.toFixed(1)} เมตร\nสถานะ: ${isInside.value ? 'อยู่ในพื้นที่' : 'อยู่นอกพื้นที่'}`);
             }
           }
         },
