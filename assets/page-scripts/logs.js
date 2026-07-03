@@ -368,12 +368,13 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
               const rawRows = Array.isArray(response?.data) ? response.data : [];
               const rows = filterExportRows(rawRows);
 
-              const header = ["ชื่อ", "อีเมล", "ละติจูด", "ลองจิจูด", "สถานที่", "วันเวลา"];
+              const header = ["ชื่อ", "อีเมล", "ละติจูด", "ลองจิจูด", "ระยะห่างจากจุดศูนย์กลาง (ม.)", "สถานที่", "วันเวลา"];
               const body = rows.map((row) => [
                 String(row.displayName || row.name || ""),
                 String(row.email || ""),
                 row.lat ?? "",
                 row.lng ?? "",
+                row.distantcenter ?? "",
                 String(row.site || ""),
                 formatDisplayTime(row.createdAt || row.time || ""),
               ]);
@@ -384,6 +385,7 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
                 { wch: 30 },
                 { wch: 14 },
                 { wch: 14 },
+                { wch: 20 },
                 { wch: 28 },
                 { wch: 24 },
               ];
@@ -682,6 +684,7 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
                       <th>ชื่อ</th>
                       <th>LINE Email</th>
                       <th>พิกัด</th>
+                      <th>ระยะห่างจากจุดศูนย์กลาง</th>
                       <th>สถานะ</th>
                       <th>Edit</th>
                     </tr>
@@ -701,6 +704,12 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
                       </td>
                       <td>
                         {{ common.formatNumber(log.lat) || '-' }}, {{ common.formatNumber(log.lng) || '-' }}
+                      </td>
+                      <td>
+                        <span v-if="log.distantcenter !== undefined && log.distantcenter !== null && log.distantcenter !== ''">
+                          {{ common.formatNumber(log.distantcenter, 1) }} ม.
+                        </span>
+                        <span v-else style="color:#999">-</span>
                       </td>
                       <td>
                         <span class="pill success">{{ log.status || 'checked_in' }}</span>

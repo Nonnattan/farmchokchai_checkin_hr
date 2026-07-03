@@ -15,9 +15,15 @@ const PENDING_FLOW_KEY = "pending_checkin_flow";
 // ค่าเก่าจากการสแกนพื้นที่อื่นเมื่อนานมาแล้ว (เช่น เมื่อวาน) ค้างมาปนกับรอบสแกนใหม่โดยไม่ตั้งใจ
 const AREA_ID_STORAGE_KEY = "checkin_pending_area_id";
 const AREA_ID_STORAGE_TTL_MS = 10 * 60 * 1000; // ใช้ค่าที่จำไว้ได้ไม่เกิน 10 นาที
-// โหมดปกติ: เก็บ GPS 5 ครั้ง ทุก 2 วินาที → เลือก best → บันทึก 1 แถวลง Sheet "Logs"
-const MAX_GPS_READINGS = 5;
-const READING_INTERVAL_MS = 2000;
+// ⚠️ CHANGE (โหมดปกติสุ่ม GPS เหมือน Test mode แต่บันทึกแค่ค่าเดียว):
+// เดิมโหมดปกติเก็บ GPS แค่ 5 ครั้ง ทุก 2 วินาที แล้วเลือก "best" ด้วยวิธี clustering (กลุ่มที่มีจำนวนมากสุด
+// + accuracy ต่ำสุดในกลุ่มนั้น) ตอนนี้เปลี่ยนให้สุ่มค่าเหมือน Test mode เป๊ะ ๆ (10 ครั้ง ทุก 1 วินาที) เพื่อให้ได้
+// ตัวอย่างตำแหน่งเยอะขึ้น แต่ตอนสุดท้ายจะ "ไม่" บันทึกทุกค่าแบบ Test mode — จะเลือกบันทึกแค่ 1 ค่าเดียวคือค่าที่มี
+// ระยะห่างจากจุดศูนย์กลางพื้นที่ (centerLat/centerLng) น้อยที่สุด (ดูฟังก์ชัน selectClosestToCenter) แล้วยังคง
+// ต้องตรวจ Geofence (อยู่ในขอบเขตที่กำหนดหรือไม่) ก่อนบันทึกจริงเหมือนเดิมทุกประการ — ถ้าไม่อยู่ในขอบเขตก็ยัง
+// error เหมือนเดิม ไม่ได้ตัด geofence ออก
+const MAX_GPS_READINGS = 10;
+const READING_INTERVAL_MS = 1000;
 // โหมด Test (?test=1): เก็บ GPS 10 ครั้ง ทุก 1 วินาที → บันทึกทันทีทุกครั้งลง Sheet "Test" ข้าม Geofence
 const TEST_MAX_GPS_READINGS = 10;
 const TEST_READING_INTERVAL_MS = 1000;
@@ -261,6 +267,27 @@ createApp({
 
         liffReady.value = true;
 
+        // ⚠️ NEW (เปิดใน browser นอก แทนที่จะเปิดใน LINE in-app browser):
+        // liff.isInClient() = true หมายถึงตอนนี้กำลังเปิดหน้านี้อยู่ใน "LINE in-app browser" (webview ในแอป LINE)
+        // ซึ่งเป็นค่า default เวลา user กด link/QR จากในแอป LINE เอง ทีมงานต้องการให้เด้งออกไปเปิดใน browser
+        // ของเครื่อง (เช่น Chrome/Safari) แทนเสมอ จึงเรียก liff.openWindow({ external: true }) เพื่อสั่งให้ระบบ
+        // เปิด URL เดิม (คง areaId ไว้ด้วย getReturnUrl) ในเบราว์เซอร์เริ่มต้นของเครื่อง แล้วหยุด flow ของหน้านี้
+        // ไว้แค่นี้ (return โดยไม่เช็ค login ต่อ) เพราะกำลังจะออกจากหน้านี้ไปเปิดหน้าใหม่ในเบราว์เซอร์นอกอยู่แล้ว
+        // เมื่อเปิดใน Chrome/Safari แล้ว liff.isInClient() จะเป็น false ทำให้ผ่านเงื่อนไขนี้ไปทำงานปกติ (login
+        // ผ่าน liff.login() ซึ่งจะพาไปหน้า LINE Login ในเบราว์เซอร์นอกแทน)
+        if (liff.isInClient()) {
+          setStatus(
+            "idle",
+            "กำลังเปิดใน Browser ภายนอก...",
+            "กรุณารอสักครู่ ระบบกำลังเปลี่ยนไปเปิดหน้านี้ใน Chrome/Safari ของเครื่องคุณ",
+          );
+          liff.openWindow({
+            url: getReturnUrl(areaId),
+            external: true,
+          });
+          return;
+        }
+
         if (liff.isLoggedIn()) {
           // พยายามโหลด Profile ทันที ถ้า token ใช้ไม่ได้ (revoked) ให้ล้าง session และ login ใหม่อัตโนมัติ
           try {
@@ -490,63 +517,29 @@ createApp({
       }, 100);
     }
 
-    // Clustering algorithm: Group nearby coordinates
-    function clusterReadings(readings, clusterRadiusMeters = 10) {
-      if (readings.length === 0) return [];
-
-      const clusters = [];
-      const used = new Set();
-
-      readings.forEach((reading, idx) => {
-        if (used.has(idx)) return;
-
-        const cluster = [reading];
-        used.add(idx);
-
-        readings.forEach((other, otherIdx) => {
-          if (used.has(otherIdx)) return;
-          const dist = calculateDistance(
-            reading.lat,
-            reading.lng,
-            other.lat,
-            other.lng,
-          );
-          if (dist <= clusterRadiusMeters) {
-            cluster.push(other);
-            used.add(otherIdx);
-          }
-        });
-
-        clusters.push(cluster);
-      });
-
-      return clusters;
-    }
-
-    // Select best GPS from all readings
-    function selectBestGPS(readings) {
+    // ⚠️ CHANGE: เดิมใช้วิธี clustering (clusterReadings + เลือก cluster ใหญ่สุด แล้วเลือก accuracy ต่ำสุด
+    // ในนั้น) ตอนนี้เปลี่ยนวิธีเลือก "ค่าที่จะบันทึก" ใหม่ทั้งหมด — เลือกจาก reading ทั้งหมดที่สุ่มมา (10 ครั้ง)
+    // ตัวที่มีระยะห่างจากจุดศูนย์กลางพื้นที่ (config.value.centerLat/centerLng) "น้อยที่สุด" ตรงๆ เลย
+    // (ไม่สนใจ accuracy หรือการรวมกลุ่มอีกต่อไป) ค่าที่ได้จากฟังก์ชันนี้จะยังต้องผ่านการตรวจ Geofence
+    // (common.isInsideBoundary) เหมือนเดิมก่อนจะบันทึกจริงลง Sheet "Logs"
+    function selectClosestToCenter(readings) {
       if (readings.length === 0) return null;
 
-      // Cluster readings
-      const clusters = clusterReadings(readings, 10); // 10m cluster radius
+      const centerLat = config.value.centerLat;
+      const centerLng = config.value.centerLng;
 
-      // Find the largest cluster
-      let largestCluster = clusters[0];
-      clusters.forEach((cluster) => {
-        if (cluster.length > largestCluster.length) {
-          largestCluster = cluster;
-        }
-      });
+      let bestReading = readings[0];
+      let bestDistance = calculateDistance(bestReading.lat, bestReading.lng, centerLat, centerLng);
 
-      // Within the largest cluster, select the reading with lowest accuracy
-      let bestReading = largestCluster[0];
-      largestCluster.forEach((reading) => {
-        if (reading.accuracy < bestReading.accuracy) {
+      readings.forEach((reading) => {
+        const distance = calculateDistance(reading.lat, reading.lng, centerLat, centerLng);
+        if (distance < bestDistance) {
           bestReading = reading;
+          bestDistance = distance;
         }
       });
 
-      return bestReading;
+      return { ...bestReading, distanceToCenter: bestDistance };
     }
 
     // Task 1: Automatic GPS Sampling
@@ -659,8 +652,8 @@ createApp({
                 );
                 readingCount.value = 0;
               } else {
-                // โหมดปกติ: เลือก best GPS และตรวจ Geofence
-                const bestGPS = selectBestGPS(gpsReadings);
+                // โหมดปกติ: เลือกค่าที่ใกล้จุดศูนย์กลางพื้นที่ที่สุดจากทั้ง 10 ครั้งที่สุ่มมา แล้วตรวจ Geofence
+                const bestGPS = selectClosestToCenter(gpsReadings);
 
                 if (bestGPS) {
                   updateCurrentPosition(bestGPS.lat, bestGPS.lng, bestGPS.accuracy);
@@ -820,7 +813,7 @@ createApp({
       currentDistance,
       readingCount,
       maxAccuracy,
-      maxGpsReadings: MAX_GPS_READINGS, // FIX: template เดิมเขียนเลข "/10" ตายตัว ทั้งที่ตอนนี้สุ่ม GPS แค่ 5 ครั้ง
+      maxGpsReadings: MAX_GPS_READINGS, // ตอนนี้โหมดปกติสุ่ม GPS 10 ครั้งเท่ากับ Test mode (ดู CHANGE ด้านบน)
       startGPSSampling,
       confirmCheckIn,
       samplingInProgress,

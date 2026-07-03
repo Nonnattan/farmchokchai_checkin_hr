@@ -17,6 +17,7 @@ const LOG_HEADERS = [
   "accuracy",
   "userId",
   "status",
+  "distantcenter", // ระยะห่างจากจุดศูนย์กลางพื้นที่ (เมตร) — เพิ่มตามคำขอ เพื่อดูย้อนหลังว่าตอนเช็กอินอยู่ห่างจากจุดศูนย์กลางเท่าไร
 ];
 
 // Schema สำหรับ Sheet "Test" — เหมือน Logs แต่เพิ่ม sampleIndex และ areaId เพื่อระบุว่าเป็นการอ่านครั้งที่เท่าไร
@@ -1138,6 +1139,7 @@ function validateGeofence(payload) {
         areaMaxAcc +
         "m " +
         "กรุณายืนในที่โล่งหรือขยับห่างจากอาคารแล้วลองใหม่",
+      distanceFromCenter: distanceFromCenter,
     };
   }
 
@@ -1146,6 +1148,7 @@ function validateGeofence(payload) {
     return {
       ok: false,
       err: "ไม่พบข้อมูลพื้นที่ที่ถูกต้อง กรุณาติดต่อผู้ดูแลระบบ",
+      distanceFromCenter: distanceFromCenter,
     };
   }
 
@@ -1158,10 +1161,13 @@ function validateGeofence(payload) {
     return {
       ok: false,
       err: "ขออภัย คุณอยู่นอกพื้นที่ทำงานที่กำหนดไว้ (" + areaLabel + ")",
+      distanceFromCenter: distanceFromCenter,
     };
   }
 
-  return { ok: true };
+  // ⚠️ เพิ่ม distanceFromCenter ใน return เพื่อให้ saveLog() เอาไปบันทึกลงคอลัมน์ "distantcenter"
+  // ใน Sheet Logs ได้โดยไม่ต้องคำนวณซ้ำอีกรอบ (คำนวณจากพิกัด/พื้นที่ชุดเดียวกันที่ผ่านการตรวจสอบแล้ว)
+  return { ok: true, distanceFromCenter: distanceFromCenter };
 }
 
 function saveLog(payload) {
@@ -1219,6 +1225,12 @@ function saveLog(payload) {
     if (h === "accuracy") return safeAccuracy;
     if (h === "userId") return resolvedUserId;
     if (h === "status") return payload.status || "checked_in";
+    // ระยะห่างจากจุดศูนย์กลางพื้นที่ (เมตร) ที่คำนวณไว้แล้วตอน validateGeofence — ปัดเป็นทศนิยม 1 ตำแหน่ง
+    if (h === "distantcenter")
+      return typeof validation.distanceFromCenter === "number" &&
+        !isNaN(validation.distanceFromCenter)
+        ? Math.round(validation.distanceFromCenter * 10) / 10
+        : "";
     return "";
   });
 

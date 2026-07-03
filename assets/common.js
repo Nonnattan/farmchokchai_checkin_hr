@@ -3,7 +3,7 @@
   const PENDING_KEY = "pending_checkin_payload";
   const LAST_CHECKIN_KEY = "last_checkin";
   const AREA_CACHE_KEY = "checkin_area_cache";
-  const API_URL = "https://script.google.com/macros/s/AKfycbwArlhauCiqn62zZtRnMV8DP7pHgcTvVPFk7g6QI-4-kFXeRDXlg7yyMhsZmFX6hHlt/exec";
+  const API_URL = "https://script.google.com/macros/s/AKfycbxi64mybj1BOUHx_IqZri9toPYRc1FOyaNNFURWLQ0rZ-oUybKkJGp1zq2cEUXLDAQ7/exec";
   const LIFF_ID = "2008594376-aBuTJTic";
 
   const DEFAULT_AREA = {
@@ -195,13 +195,43 @@
     return readJSON(getAreaCacheKey(), []);
   }
 
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   async function getAreas(timeoutMs = 15000, bypassCache = false) {
     try {
-      // Changed Action from "areas" to "location"
-      const data = await requestJson("location", null, "GET", timeoutMs);
-      const list = normalizeAreaList(data);
-      cacheAreas(list);
-      return list;
+      // ⚠️ BUGFIX (โหลดพื้นที่ timeout บ่อย โดยเฉพาะครั้งแรกที่เปิดหน้า):
+      // Apps Script Web App มักมี "cold start" (เครื่องแม่ข่ายยังไม่ถูกปลุก/ถูกพักไว้)
+      // ทำให้ request แรกช้ากว่าปกติมาก (บางครั้งเกิน 15 วิ) แล้วโดน AbortController ตัดก่อน
+      // ทั้งที่ถ้ารอ/ลองใหม่อีกนิดก็จะตอบกลับปกติ เดิมโค้ดนี้ throw ทันทีตั้งแต่ครั้งแรกที่ timeout
+      // แก้โดย: ลอง request ซ้ำอัตโนมัติ (GET เท่านั้น ปลอดภัยเพราะไม่ได้เขียนข้อมูล) พร้อมขยาย
+      // เวลาคอยขึ้นทุกรอบ ก่อนจะยอม fallback ไปใช้แคช/throw error ให้ผู้ใช้เห็น
+      const attempts = [timeoutMs, Math.round(timeoutMs * 1.5), timeoutMs * 2];
+      let lastErr = null;
+      for (let i = 0; i < attempts.length; i++) {
+        try {
+          if (i > 0) {
+            console.warn(
+              `[CheckinCommon] getAreas: ลองโหลดพื้นที่ใหม่ (ครั้งที่ ${i + 1}/${attempts.length}, timeout ${attempts[i]}ms)`,
+            );
+            await sleep(500);
+          }
+          // Changed Action from "areas" to "location"
+          const data = await requestJson("location", null, "GET", attempts[i]);
+          const list = normalizeAreaList(data);
+          cacheAreas(list);
+          return list;
+        } catch (attemptErr) {
+          lastErr = attemptErr;
+          // มีแค่ error "หมดเวลาการร้องขอ" เท่านั้นที่ควรลองใหม่ — error อื่น (เช่น Apps Script
+          // ตอบ ok:false เพราะ config ผิด) ลองซ้ำไปก็ไม่มีทางสำเร็จ ให้ throw ออกไปทันที
+          if (!attemptErr || attemptErr.message !== "หมดเวลาการร้องขอ") {
+            throw attemptErr;
+          }
+        }
+      }
+      throw lastErr;
     } catch (e) {
       // ⚠️ BUGFIX (check-in ไม่ผ่านทั้งที่อยู่ในพื้นที่จริง):
       // เดิมโค้ดตรงนี้ ถ้า bypassCache=true แล้วโหลดจากเซิร์ฟเวอร์ไม่สำเร็จ (เช่น เน็ตมือถือหลุด/
