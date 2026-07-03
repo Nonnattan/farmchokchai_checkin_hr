@@ -3,7 +3,7 @@
   const PENDING_KEY = "pending_checkin_payload";
   const LAST_CHECKIN_KEY = "last_checkin";
   const AREA_CACHE_KEY = "checkin_area_cache";
-  const API_URL = "https://script.google.com/macros/s/AKfycbw0xWZUEDJ1vreAM0zIWJYJcVx21Z1Nf-8MruQ3OAsNDXpPJfqPShScyxa1jViPVSQU/exec";
+  const API_URL = "https://script.google.com/macros/s/AKfycbwNPuwCAgCq04bvk6erlNAQTJHxAleMFhrDawwh1AF3k6B9PSslp8J5VU9iVDDXU0kP/exec";
   const LIFF_ID = "2008594376-aBuTJTic";
 
   const DEFAULT_AREA = {
@@ -196,34 +196,53 @@
   }
 
   async function getAreas(timeoutMs = 15000, bypassCache = false) {
-    try {
-      // Changed Action from "areas" to "location"
+    // ⚠️ BUGFIX (ขึ้น "ไม่พบพื้นที่ตามรหัส QR ... ในระบบ" ทั้งที่พื้นที่มีอยู่จริงในชีต):
+    // เดิมถ้า fetch ไปยัง Apps Script ล้มเหลวครั้งเดียว (เช่น Apps Script cold-start ตอบช้า, สัญญาณมือถือ
+    // หลุดชั่วขณะ) จะตัดสินใจว่า "โหลดไม่สำเร็จ" ทันที ไม่มีการลองซ้ำเลย ทั้งที่ปัญหาแบบนี้ส่วนใหญ่เป็นแค่
+    // ปัญหาชั่วคราว (transient) ลองอีกครั้งภายในไม่กี่วินาทีมักจะผ่าน — เพิ่ม retry อัตโนมัติ 1 ครั้งก่อนยอมแพ้
+    // เพื่อลด False Negative ที่เกิดจากเน็ตกระตุกแป๊บเดียว โดยไม่ต้องให้ user กดปุ่ม "ลองเชื่อมต่อใหม่" เอง
+    async function fetchOnce() {
       const data = await requestJson("location", null, "GET", timeoutMs);
       const list = normalizeAreaList(data);
       cacheAreas(list);
       return list;
-    } catch (e) {
-      // ⚠️ BUGFIX (check-in ไม่ผ่านทั้งที่อยู่ในพื้นที่จริง):
-      // เดิมโค้ดตรงนี้ ถ้า bypassCache=true แล้วโหลดจากเซิร์ฟเวอร์ไม่สำเร็จ (เช่น เน็ตมือถือหลุด/
-      // Apps Script ตอบช้า/timeout) จะคืนค่า [normalizeArea(DEFAULT_AREA)] ซึ่งเป็นพิกัด "ตัวอย่าง"
-      // ที่ฝังไว้ใน common.js เอง (ไม่ใช่พิกัดพื้นที่จริงที่ Admin ตั้งค่าไว้) — คลาดกันได้เป็นร้อยเมตร
-      // ผลคือ user มือถือที่ยืนอยู่ในพื้นที่จริงแท้ๆ จะถูกเช็คระยะทางกับพิกัด "หลอก" นี้แทน ทำให้
-      // เช็คอินไม่ผ่านโดยไม่มีใครรู้สาเหตุ (ปัญหานี้ไม่ค่อยเกิดบนคอมของ Admin เพราะเน็ต/แคชเสถียรกว่า)
-      // แก้โดย: ลองใช้ค่าที่แคชไว้ก่อนเสมอ (ไม่สนใจ bypassCache ตอน error) และถ้าไม่มีแคชเลยจริงๆ
-      // ให้ throw error ต่อ เพื่อให้หน้าจอ (loadConfig ฝั่ง user-checkin.js) แสดงข้อความ "โหลดไม่สำเร็จ"
-      // แทนที่จะเงียบๆ แล้วเอาพิกัดผิดไปคำนวณระยะทาง
-      console.error("[CheckinCommon] getAreas: โหลดพื้นที่จากเซิร์ฟเวอร์ไม่สำเร็จ", e);
-      const cached = normalizeAreaList(readCachedAreas());
-      if (cached.length) {
-        console.warn("[CheckinCommon] getAreas: ใช้ข้อมูลพื้นที่จากแคชแทน (" + cached.length + " รายการ)");
-        return cached;
-      }
-      if (bypassCache) {
+    }
+
+    try {
+      return await fetchOnce();
+    } catch (firstErr) {
+      console.warn("[CheckinCommon] getAreas: โหลดครั้งแรกไม่สำเร็จ กำลังลองซ้ำอีก 1 ครั้ง...", firstErr);
+      try {
+        return await fetchOnce();
+      } catch (e) {
+        // ⚠️ BUGFIX (check-in ไม่ผ่านทั้งที่อยู่ในพื้นที่จริง):
+        // เดิมโค้ดตรงนี้ ถ้าโหลดจากเซิร์ฟเวอร์ไม่สำเร็จ (เช่น เน็ตมือถือหลุด/ Apps Script ตอบช้า/timeout)
+        // จะคืนค่า [] (ลิสต์ว่าง) แบบเงียบๆ เมื่อ bypassCache เป็น false (ค่าเริ่มต้น) — และจุดที่ใช้บ่อย
+        // ที่สุดคือ getArea() (เรียกทุกครั้งที่ user เปิดหน้าเช็คอินจริง) ก็เรียก getAreas() แบบไม่ส่ง
+        // bypassCache=true เลย จึงเข้าเงื่อนไขนี้เสมอเวลาเน็ตมีปัญหา ผลคือ getArea() เอาลิสต์ว่างไปหา
+        // แล้วไม่เจอ ก็ fallback ไปใช้ normalizeArea(DEFAULT_AREA) ซึ่งเป็นพิกัด "ตัวอย่าง" ที่ฝังไว้ใน
+        // common.js เอง (areaId เป็นค่าว่าง) ไม่ใช่พิกัดพื้นที่จริง — พอกลับไปเช็คที่ user-checkin.js ค่า
+        // areaId ของพื้นที่ที่ได้ ("") ไม่ตรงกับ areaId จาก QR เลย เลยขึ้น "ไม่พบพื้นที่ตามรหัส QR ในระบบ"
+        // ซึ่งเป็นข้อความที่ทำให้เข้าใจผิดว่าพื้นที่ไม่มีอยู่จริง ทั้งที่สาเหตุจริงคือ "โหลดข้อมูลจากเครือข่าย
+        // ไม่สำเร็จ" ต่างหาก แก้โดย: ลองใช้ค่าที่แคชไว้ก่อนเสมอ (ช่วยเคสที่เคยโหลดสำเร็จมาก่อนหน้านี้บนเครื่อง
+        // เดียวกัน) แต่ถ้าไม่มีแคชเลยจริงๆ (เช่น เปิดจากมือถือเครื่องใหม่/ browser ใหม่เป็นครั้งแรก) ต้อง throw
+        // error ต่อเสมอ (ไม่ใช่แค่ตอน bypassCache=true เหมือนเดิม) เพื่อให้ loadConfig() ฝั่ง user-checkin.js
+        // รู้ว่านี่คือปัญหาเครือข่าย ไม่ใช่พื้นที่ไม่มีจริง แล้วแสดงข้อความที่ตรงกับสาเหตุจริงให้ user เห็น
+        console.error("[CheckinCommon] getAreas: โหลดพื้นที่จากเซิร์ฟเวอร์ไม่สำเร็จ (ลองแล้ว 2 ครั้ง)", e);
+        const cached = normalizeAreaList(readCachedAreas());
+        if (cached.length) {
+          console.warn("[CheckinCommon] getAreas: ใช้ข้อมูลพื้นที่จากแคชแทน (" + cached.length + " รายการ)");
+          return cached;
+        }
+        // ไม่มีแคชเลย และโหลดจากเซิร์ฟเวอร์ก็ไม่สำเร็จทั้ง 2 ครั้ง — ต้อง throw เสมอ ไม่ว่า bypassCache จะเป็น
+        // ค่าอะไรก็ตาม (ไม่ทำแบบเดิมที่คืนค่า [] เงียบๆ เมื่อ bypassCache=false) เพื่อไม่ให้ผู้เรียก (โดยเฉพาะ
+        // getArea() ที่ไม่เคยส่ง bypassCache=true) เข้าใจผิดว่า "โหลดสำเร็จแต่ไม่มีพื้นที่" ทั้งที่จริงคือ
+        // "โหลดไม่สำเร็จเลย"
         throw e;
       }
-      return cached; // []
     }
   }
+
 
   function invalidateAreaCache() {
     try {
@@ -342,6 +361,13 @@
 
   async function addLog(entry, timeoutMs = 30000) {
     const result = await requestJson("logs", entry || {}, "POST", timeoutMs);
+    return result;
+  }
+
+  // บันทึกลง sheet "test" (โหมดทดสอบสัญญาณ GPS) — บันทึกทุกครั้งไม่ว่าจะอยู่ในกรอบพื้นที่หรือไม่
+  // ต่างจาก addLog() ตรงที่ฝั่งเซิร์ฟเวอร์จะไม่ปฏิเสธ (validateGeofence) เมื่ออยู่นอกกรอบ แค่บันทึกไว้เฉยๆ
+  async function addTestLog(entry, timeoutMs = 30000) {
+    const result = await requestJson("testlog", entry || {}, "POST", timeoutMs);
     return result;
   }
 
@@ -841,6 +867,7 @@
     getPendingCheckin,
     clearPendingCheckin,
     addLog,
+    addTestLog,
     saveLogName,
     getLogs,
     getUsers,

@@ -5,6 +5,28 @@ const AREA_ASSIGNMENTS_SHEET_NAME = "AreaAssignments";
 const USERS_SHEET_NAME = "Users";
 const BANGKOK_TZ = "Asia/Bangkok";
 
+// ชีต "Test" — โหมดทดสอบสัญญาณ GPS: บันทึกทุกครั้งที่กดเช็คอินไม่ว่าจะอยู่ในกรอบพื้นที่หรือไม่
+// (saveTestLog() ด้านล่างจะไม่ปฏิเสธเมื่ออยู่นอกกรอบเหมือน saveLog() ปกติ) มีคอลัมน์เพิ่มจาก Logs
+// คือ "distantcenter" (ระยะห่างจากจุดศูนย์กลางของพื้นที่ หน่วยเมตร) ไว้ใช้วิเคราะห์ความแม่นยำ GPS
+// ⚠️ UPDATE: เปลี่ยนชื่อชีตจาก "test" (ตัวพิมพ์เล็ก) เป็น "Test" (ตัวพิมพ์ใหญ่ตามที่ระบุ ให้สอดคล้อง
+// กับชื่อชีต "Logs") — ถ้ามีชีต "test" เดิมอยู่แล้วพร้อมข้อมูลเก่า ให้ผู้ดูแลระบบเปลี่ยนชื่อชีตนั้นเป็น
+// "Test" เองใน Google Sheet (คลิกขวาที่แท็บชีต > เปลี่ยนชื่อ) เพื่อไม่ให้ข้อมูลเก่าหายไป ไม่เช่นนั้นระบบ
+// จะสร้างชีต "Test" ใหม่ว่างๆ ขึ้นมาแยกต่างหาก (getSheetByNameOrCreate จะสร้างให้อัตโนมัติถ้ายังไม่มี)
+const TEST_SHEET_NAME = "Test";
+const TEST_LOG_HEADERS = [
+  "displayName",
+  "email",
+  "phone",
+  "lat",
+  "lng",
+  "createdAt",
+  "site",
+  "userId",
+  "status",
+  "accuracy",
+  "distantcenter",
+];
+
 const LOG_HEADERS = [
   "createdAt",
   "displayName",
@@ -72,6 +94,33 @@ function ensureLogsSheetSchema() {
     sheet
       .getRange(1, headers.length + 1, 1, missing.length)
       .setValues([missing]);
+  }
+
+  return sheet;
+}
+
+/**
+ * ตรวจและแก้ไขหัวคอลัมน์ของชีต "Test" (โหมดทดสอบสัญญาณ GPS) ให้ตรงกับ TEST_LOG_HEADERS เสมอ
+ * ทำงานคล้าย ensureLogsSheetSchema() แต่ไม่มีการ rename หัวคอลัมน์เก่า เพราะเป็นชีตใหม่ล้วนๆ
+ * ปลอดภัยที่จะเรียกซ้ำได้ทุกครั้ง (idempotent)
+ */
+function ensureTestSheetSchema() {
+  const sheet = getSheetByNameOrCreate(TEST_SHEET_NAME);
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+
+  if (lastRow === 0) {
+    sheet.appendRow(TEST_LOG_HEADERS);
+    return sheet;
+  }
+
+  const headerRange = sheet.getRange(1, 1, 1, Math.max(lastCol, 1));
+  const headers = headerRange.getValues()[0].map((h) => String(h || "").trim());
+  const existing = new Set(headers.filter(Boolean));
+  const missing = TEST_LOG_HEADERS.filter((h) => !existing.has(h));
+
+  if (missing.length > 0) {
+    sheet.getRange(1, headers.length + 1, 1, missing.length).setValues([missing]);
   }
 
   return sheet;
@@ -215,6 +264,8 @@ function doPost(e) {
       }
     } else if (action === "logs") {
       result = saveLog(payload);
+    } else if (action === "testlog") {
+      result = saveTestLog(payload);
     } else if (action === "saveLogName") {
       result = handleSaveLogName(payload);
     } else {
@@ -1206,6 +1257,81 @@ function saveLog(payload) {
   return {
     ok: true,
     message: "บันทึกข้อมูลสำเร็จ",
+    userId: resolvedUserId,
+    displayName: resolvedDisplayName,
+  };
+}
+
+/**
+ * บันทึกลงชีต "Test" (โหมดทดสอบสัญญาณ GPS) — บันทึกทุกครั้งที่เรียก "ไม่ว่าผลตรวจสอบพื้นที่จะผ่านหรือไม่"
+ * ต่างจาก saveLog() ตรงที่ไม่ปฏิเสธ (reject) เมื่ออยู่นอกกรอบพื้นที่ เพราะจุดประสงค์ของโหมดนี้คือเก็บข้อมูล
+ * ดิบไว้วิเคราะห์ความแม่นยำ/ความคลาดเคลื่อนของ GPS จริงในสนาม ไม่ใช่ควบคุมสิทธิ์การเช็คอิน
+ * เพิ่มคอลัมน์ "distantcenter" (ระยะห่างจากจุดศูนย์กลางพื้นที่ หน่วยเมตร) เทียบกับ saveLog()
+ */
+function saveTestLog(payload) {
+  const lat = Number(payload.lat);
+  const lng = Number(payload.lng);
+  if (isNaN(lat) || isNaN(lng)) return { ok: false, err: "พิกัดไม่ถูกต้อง" };
+
+  // เรียก validateGeofence() แค่เพื่อรู้ผล "อยู่ในกรอบหรือไม่" (เก็บไว้เป็นค่า status/บันทึก) แต่ไม่ใช้
+  // ผลนี้ตัดสินใจปฏิเสธการบันทึก (ต่างจาก saveLog() ที่ reject เมื่อ validation.ok เป็น false)
+  const validation = validateGeofence(payload);
+
+  // หาศูนย์กลางพื้นที่เพื่อคำนวณ distantcenter (ใช้ตรรกะเดียวกับใน validateGeofence)
+  const areaId = payload.areaId || "default";
+  ensureLocationSheetSchema();
+  const areas = getSheetDataAsObjects("location");
+  let area = areas.find((a) => {
+    const id = String(a.areaId || a.qr_code || "").trim();
+    return id === String(areaId).trim();
+  });
+  if (!area) area = DEFAULT_AREA;
+
+  const centerLat = numOr(area.lat, numOr(area.centerLat, NaN));
+  const centerLng = numOr(area.lng, numOr(area.centerLng, NaN));
+  const distantcenter =
+    !isNaN(centerLat) && !isNaN(centerLng)
+      ? Math.round(calculateDistance(lat, lng, centerLat, centerLng) * 100) / 100
+      : numOr(payload.distantcenter, "");
+
+  const resolvedUserId = String(payload.userId || "").trim();
+  if (resolvedUserId) {
+    ensureLineCheckinUser(payload);
+  }
+  const lineUser = resolvedUserId
+    ? getLineCheckinUserByUserId(resolvedUserId)
+    : null;
+  const resolvedDisplayName = resolveLogDisplayName(payload, lineUser);
+  const createdAtBangkok = formatBangkokDateTime(
+    payload.time ? parseLogDate(payload.time) || new Date() : new Date(),
+  );
+  const safeAccuracy = numOr(payload.accuracy, "");
+
+  const sheet = ensureTestSheetSchema();
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+
+  const rowData = headers.map(function (h) {
+    if (h === "createdAt") return createdAtBangkok;
+    if (h === "displayName") return resolvedDisplayName;
+    if (h === "email") return payload.email || "";
+    if (h === "phone") return payload.phone || "";
+    if (h === "site") return payload.site || "";
+    if (h === "lat") return numOr(payload.lat, "");
+    if (h === "lng") return numOr(payload.lng, "");
+    if (h === "accuracy") return safeAccuracy;
+    if (h === "userId") return resolvedUserId;
+    if (h === "status") return validation.ok ? "inside_boundary" : "outside_boundary";
+    if (h === "distantcenter") return distantcenter;
+    return "";
+  });
+
+  sheet.appendRow(rowData);
+  return {
+    ok: true,
+    message: "บันทึกข้อมูลทดสอบสำเร็จ",
+    inside: validation.ok,
+    distantcenter: distantcenter,
     userId: resolvedUserId,
     displayName: resolvedDisplayName,
   };

@@ -12,6 +12,10 @@ createApp({
     const statusTitle = ref("กำลังโหลด...");
     const statusDesc = ref("กำลังอ่าน role และพื้นที่");
     const loading = ref(false);
+    // โหมดสร้าง QR สำหรับทดสอบสัญญาณ GPS: เมื่อเปิดใช้งาน จะแนบ &mode=test ต่อท้ายลิงก์ QR
+    // สแกน QR นี้แล้วเช็คอินทุกครั้งจะถูกบันทึกลงชีต Google Sheet ชื่อ "test" เสมอ ไม่ว่าจะอยู่ในกรอบ
+    // พื้นที่หรือไม่ (ดู runTestLog() ใน user-checkin.js) ใช้สำหรับเก็บข้อมูลดิบไปวิเคราะห์ความแม่นยำ GPS
+    const testQr = ref(false);
 
     const selectedArea = computed(() => {
       const id = String(selectedId.value || "").trim();
@@ -75,7 +79,7 @@ createApp({
         return;
       }
       qrEl.value.innerHTML = "";
-      const url = `${location.origin}${location.pathname.replace(/[^/]*$/, "")}user/checkin.html?areaId=${encodeURIComponent(area.areaId || area.qr_code || "")}&site=${encodeURIComponent(area.areaName || area.remark || "")}`;
+      const url = `${location.origin}${location.pathname.replace(/[^/]*$/, "")}user/checkin.html?areaId=${encodeURIComponent(area.areaId || area.qr_code || "")}&site=${encodeURIComponent(area.areaName || area.remark || "")}${testQr.value ? "&mode=test" : ""}`;
       const t = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).replace(/-/g, "").slice(0, 10).toUpperCase();
       token.value = t;
       qrUrl.value = url;
@@ -98,6 +102,11 @@ createApp({
 
     // เมื่อผู้ใช้เปลี่ยน selectedId เอง (จาก dropdown) ให้สร้าง QR ใหม่ทันที
     watch(selectedId, () => {
+      nextTick(() => buildQR());
+    });
+
+    // เมื่อสลับโหมดทดสอบ ให้สร้าง QR ใหม่ทันทีเพื่อสะท้อน &mode=test ในลิงก์
+    watch(testQr, () => {
       nextTick(() => buildQR());
     });
 
@@ -198,6 +207,7 @@ createApp({
       qrEl,
       qrUrl,
       token,
+      testQr,
       statusType,
       statusTitle,
       statusDesc,
@@ -254,12 +264,19 @@ createApp({
             <div class="span-3 field"><label>West</label><div class="code">{{ displayMetrics.westMeters }}</div></div>
           </div>
 
+          <div class="field" style="flex-direction:row;align-items:center;gap:8px;">
+            <input type="checkbox" id="testQrToggle" v-model="testQr" style="width:18px;height:18px;" />
+            <label for="testQrToggle" style="margin:0;cursor:pointer;">
+              🧪 สร้าง QR โหมดทดสอบสัญญาณ (บันทึกทุกครั้งลงชีต "test" ไม่ว่าจะอยู่ในกรอบหรือไม่)
+            </label>
+          </div>
+
           <div class="actions">
             <button class="btn primary" @click="buildQR">สร้าง QR ใหม่</button>
             <button class="btn ghost" @click="reloadAreas(true)">รีเฟรชพื้นที่</button>
           </div>
 
-          <div class="mini-note">QR นี้จะเปิดหน้า user/checkin.html พร้อม areaId ที่เลือก</div>
+          <div class="mini-note">QR นี้จะเปิดหน้า user/checkin.html พร้อม areaId ที่เลือก{{ testQr ? ' (โหมดทดสอบ — บันทึกลงชีต "test" เสมอ)' : '' }}</div>
         </section>
 
         <aside class="card stack">
