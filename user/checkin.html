@@ -8,34 +8,15 @@
     <meta http-equiv="Expires" content="0" />
     <title>LINE เช็คอิน</title>
 
-    <!-- ⚠️ UPDATE: เพิ่ม preconnect ให้เบราว์เซอร์เริ่ม DNS/TLS handshake ไปยัง CDN เหล่านี้ล่วงหน้า
-    แบบขนาน (ไม่ต้องรอ) ช่วยลดเวลาที่ script ด้านล่างต้องรอ connection กว่าจะเริ่มโหลดได้จริง
-    มีประโยชน์มากโดยเฉพาะบนมือถือสัญญาณอ่อน ที่แต่ละ DNS lookup/TLS handshake กินเวลาไม่น้อย -->
-    <link rel="preconnect" href="https://static.line-scdn.net" crossorigin />
-    <link rel="preconnect" href="https://unpkg.com" crossorigin />
-
     <link rel="stylesheet" href="../assets/styles.css" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
 
-    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js" defer></script>
-    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js" defer></script>
-    <!-- ⚠️ BUGFIX (หลัง login LINE สำเร็จ หน้าโหลดนานและไม่ยอมขึ้นหน้าเช็คอิน):
-    เดิม 2 script ด้านบน (Vue, LIFF SDK) เป็น script ธรรมดาไม่มี defer/async — script แบบนี้ "บล็อกการ
-    parse HTML ทั้งหน้า" จนกว่าจะดาวน์โหลด+รันเสร็จ โดยเฉพาะตอนกลับมาจาก redirect ของ LINE Login (โหลด
-    หน้าใหม่ทั้งหน้า ไม่มี cache) บนมือถือสัญญาณอ่อน กว่า Vue+LIFF SDK จะโหลดเสร็จ browser จะค้างเป็นหน้า
-    ว่างเปล่าไม่แสดงอะไรเลย (แม้แต่ card/spinner ก็ยังไม่ขึ้น) ผู้ใช้จึงรู้สึกว่า "โหลดนานไม่ยอมขึ้นหน้า"
-    แก้โดยเพิ่ม defer ให้ script ทั้ง 4 ตัวในหน้านี้ (2 ตัวนี้ + common.js/user-checkin.js ด้านล่างสุด)
-    ทำให้ browserแสดงผล HTML/CSS ของหน้า (card, spinner ข้อความ "กำลังโหลด...") ได้ทันทีระหว่างที่ script
-    กำลังโหลดอยู่เบื้องหลัง แล้วค่อยรัน script ตามลำดับเดิมทั้งหมดก่อน DOMContentLoaded (defer รักษาลำดับ
-    การรันของ script ที่มี defer ทุกตัวไว้เหมือนเดิมเป๊ะ ไม่กระทบพฤติกรรมโค้ด แค่ไม่บล็อกการแสดงผลเท่านั้น) -->
-
-    <!-- ⚠️ UPDATE (แก้ปัญหาสแกนครั้งแรกแล้ว LIFF init timeout ก่อนถึงขั้นขอ location เสียอีก):
-    เดิม Leaflet (ไลบรารีแผนที่ ~140KB) ถูกโหลดแบบ render-blocking ตรงนี้ ทั้งที่ยังไม่จำเป็นต้องใช้เลย —
-    แผนที่จะแสดงก็ต่อเมื่อ login LINE สำเร็จแล้วเท่านั้น (ดู v-if="liffReady && authState === 'logged_in'"
-    ในเทมเพลตด้านล่าง) การบังคับให้เบราว์เซอร์โหลด Leaflet ให้เสร็จก่อน ทั้งที่ยังไม่ต้องใช้ ทำให้กว่า Vue app
-    จะ mount และเริ่มเรียก liff.init() ได้ ต้องรอดาวน์โหลด/รัน Leaflet ให้เสร็จก่อนโดยไม่จำเป็น — บนมือถือ
-    สัญญาณอ่อนนี่คือเวลาหลายวินาทีที่เสียไปฟรีๆ ก่อนที่ตัวจับเวลา LIFF_INIT_TIMEOUT_MS จะเริ่มนับด้วยซ้ำ
-    ย้ายไปโหลดแบบ lazy (เฉพาะตอนจะสร้างแผนที่จริงๆ ใน initMap() ของ user-checkin.js) แทน ตัด Leaflet ออกจาก
-    เส้นทางที่บล็อกการเริ่มต้น LIFF ทั้งหมด -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
     <style>
       body {
@@ -313,10 +294,6 @@
           <div class="user-logo">📍</div>
           <h1 class="user-title">{{ site }}</h1>
 
-          <div v-if="testMode" class="small-pill bad" style="display:block;margin:10px 0;text-align:center;">
-            🧪 โหมดทดสอบสัญญาณ — บันทึกทุกครั้งลงชีต "test" ไม่ว่าจะอยู่ในกรอบหรือไม่
-          </div>
-
           <div class="profile-simple" v-if="profile">
             <img v-if="profile.pictureUrl" :src="profile.pictureUrl" class="profile-avatar" />
             <div v-else class="profile-avatar"></div>
@@ -374,8 +351,8 @@
         </div>
       </div>
     </div>
-    <script src="../assets/common.js" defer></script>
+    <script src="../assets/common.js"></script>
 
-    <script src="../assets/page-scripts/user-checkin.js" defer></script>
+    <script src="../assets/page-scripts/user-checkin.js"></script>
   </body>
 </html>

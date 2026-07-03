@@ -12,10 +12,8 @@ createApp({
     const statusTitle = ref("กำลังโหลด...");
     const statusDesc = ref("กำลังอ่าน role และพื้นที่");
     const loading = ref(false);
-    // โหมดสร้าง QR สำหรับทดสอบสัญญาณ GPS: เมื่อเปิดใช้งาน จะแนบ &mode=test ต่อท้ายลิงก์ QR
-    // สแกน QR นี้แล้วเช็คอินทุกครั้งจะถูกบันทึกลงชีต Google Sheet ชื่อ "test" เสมอ ไม่ว่าจะอยู่ในกรอบ
-    // พื้นที่หรือไม่ (ดู runTestLog() ใน user-checkin.js) ใช้สำหรับเก็บข้อมูลดิบไปวิเคราะห์ความแม่นยำ GPS
-    const testQr = ref(false);
+    // testMode: เมื่อติ๊ก checkbox "Test" จะเพิ่ม ?test=1 ใน QR URL
+    const testMode = ref(false);
 
     const selectedArea = computed(() => {
       const id = String(selectedId.value || "").trim();
@@ -79,12 +77,14 @@ createApp({
         return;
       }
       qrEl.value.innerHTML = "";
-      const url = `${location.origin}${location.pathname.replace(/[^/]*$/, "")}user/checkin.html?areaId=${encodeURIComponent(area.areaId || area.qr_code || "")}&site=${encodeURIComponent(area.areaName || area.remark || "")}${testQr.value ? "&mode=test" : ""}`;
+      const url = `${location.origin}${location.pathname.replace(/[^/]*$/, "")}user/checkin.html?areaId=${encodeURIComponent(area.areaId || area.qr_code || "")}&site=${encodeURIComponent(area.areaName || area.remark || "")}`;
       const t = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).replace(/-/g, "").slice(0, 10).toUpperCase();
       token.value = t;
-      qrUrl.value = url;
+      // ถ้าติ๊ก Test Mode ให้เพิ่ม ?test=1 ใน URL
+      const finalUrl = testMode.value ? url + "&test=1" : url;
+      qrUrl.value = finalUrl;
       new QRCode(qrEl.value, {
-        text: url,
+        text: finalUrl,
         width: 240,
         height: 240,
         colorDark: "#172033",
@@ -102,11 +102,6 @@ createApp({
 
     // เมื่อผู้ใช้เปลี่ยน selectedId เอง (จาก dropdown) ให้สร้าง QR ใหม่ทันที
     watch(selectedId, () => {
-      nextTick(() => buildQR());
-    });
-
-    // เมื่อสลับโหมดทดสอบ ให้สร้าง QR ใหม่ทันทีเพื่อสะท้อน &mode=test ในลิงก์
-    watch(testQr, () => {
       nextTick(() => buildQR());
     });
 
@@ -197,7 +192,7 @@ createApp({
       }
     });
 
-    return {
+      return {
       session,
       areas,
       selectedId,
@@ -207,11 +202,11 @@ createApp({
       qrEl,
       qrUrl,
       token,
-      testQr,
       statusType,
       statusTitle,
       statusDesc,
       loading,
+      testMode,
       buildQR,
       reloadAreas,
       logout,
@@ -264,19 +259,19 @@ createApp({
             <div class="span-3 field"><label>West</label><div class="code">{{ displayMetrics.westMeters }}</div></div>
           </div>
 
-          <div class="field" style="flex-direction:row;align-items:center;gap:8px;">
-            <input type="checkbox" id="testQrToggle" v-model="testQr" style="width:18px;height:18px;" />
-            <label for="testQrToggle" style="margin:0;cursor:pointer;">
-              🧪 สร้าง QR โหมดทดสอบสัญญาณ (บันทึกทุกครั้งลงชีต "test" ไม่ว่าจะอยู่ในกรอบหรือไม่)
-            </label>
-          </div>
-
           <div class="actions">
             <button class="btn primary" @click="buildQR">สร้าง QR ใหม่</button>
             <button class="btn ghost" @click="reloadAreas(true)">รีเฟรชพื้นที่</button>
           </div>
 
-          <div class="mini-note">QR นี้จะเปิดหน้า user/checkin.html พร้อม areaId ที่เลือก{{ testQr ? ' (โหมดทดสอบ — บันทึกลงชีต "test" เสมอ)' : '' }}</div>
+          <div class="field" style="display:flex;align-items:center;gap:8px;margin-top:4px;">
+            <input type="checkbox" id="testModeChk" v-model="testMode" @change="buildQR" style="width:18px;height:18px;cursor:pointer;" />
+            <label for="testModeChk" style="cursor:pointer;font-weight:600;color:#b45309;">
+              Test — เก็บ GPS 10 ครั้ง ทุก 1 วินาที บันทึกลง Sheet "Test" ทันที
+            </label>
+          </div>
+
+          <div class="mini-note">QR นี้จะเปิดหน้า user/checkin.html พร้อม areaId ที่เลือก<span v-if="testMode" style="color:#b45309;font-weight:600;"> + test=1 (TEST MODE)</span></div>
         </section>
 
         <aside class="card stack">
