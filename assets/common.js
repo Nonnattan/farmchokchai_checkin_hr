@@ -525,6 +525,13 @@
       if (a.active === false) return false;
       const roles = splitList(a.visibleRoles).map((x) => x.toLowerCase());
       const users = splitList(a.visibleUsers).map((x) => x.toLowerCase());
+      // สำหรับ admin: ต้องถูก assign โดยชัดแจ้ง (มี email/uid ใน visibleUsers) 
+      // ไม่ใช่แค่มี "admin" ใน visibleRoles เท่านั้น
+      if (r === "admin") {
+        // admin ต้องมี uid หรือ email อยู่ใน visibleUsers
+        return users.includes(id) || (mail && users.includes(mail));
+      }
+      // สำหรับ user: ตรวจสอบ role หรือ uid/email
       return roles.includes("all") || roles.includes(r) || users.includes(id) || (mail && users.includes(mail));
     });
   }

@@ -138,8 +138,11 @@ createApp({
                 String(a.qr_code || "").trim() === String(urlAreaId || "").trim(),
             );
 
-        let nextAreas = visible.length ? visible : raw;
-        if (urlArea) {
+        // สำหรับ admin: ห้ามแสดง area ที่ไม่ได้ assign แม้จะมี URL parameter
+        // (ป้องกันการเข้าถึง area ที่ไม่ได้รับอนุญาตผ่าน URL manipulation)
+        let nextAreas = visible.length ? visible : (sessionInfo.role === "admin" ? [] : raw);
+        if (urlArea && sessionInfo.role !== "admin") {
+          // masteradmin สามารถเข้าถึง area ใดๆ ผ่าน URL ได้
           const alreadyListed = nextAreas.some(
             (a) => String(a.areaId || "").trim() === String(urlArea.areaId || "").trim(),
           );
