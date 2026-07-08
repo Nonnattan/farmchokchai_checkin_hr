@@ -16,10 +16,10 @@
   // ============================================
   // 1. BROWSER DETECTION
   // ============================================
-  
+
   function detectBrowserType() {
     const ua = navigator.userAgent.toLowerCase();
-    
+
     // ตรวจสอบ LINE Browser / In-App Browser
     const isLineApp = ua.includes('line');
     const isLineWebview = ua.includes('liff') || ua.includes('line/');
@@ -27,13 +27,13 @@
     const isInstagramApp = ua.includes('instagram');
     const isTwitterApp = ua.includes('twitter');
     const isWeChatApp = ua.includes('micromessenger');
-    
+
     // ตรวจสอบ Native Browser
     const isChrome = ua.includes('chrome') && !ua.includes('chromium');
     const isSafari = ua.includes('safari') && !ua.includes('chrome');
     const isFirefox = ua.includes('firefox');
     const isEdge = ua.includes('edg');
-    
+
     return {
       isLineApp: isLineApp || isLineWebview,
       isFacebookApp,
@@ -49,15 +49,15 @@
       userAgent: ua,
     };
   }
-  
+
   function isAllowedBrowser() {
     const browser = detectBrowserType();
     return browser.isNativeBrowser && !browser.isInAppBrowser;
   }
-  
+
   function getBrowserWarningMessage() {
     const browser = detectBrowserType();
-    
+
     if (browser.isLineApp) {
       return {
         title: '⚠️ ต้องเปิดผ่าน Browser ภายนอก',
@@ -66,7 +66,7 @@
         appName: 'LINE',
       };
     }
-    
+
     if (browser.isFacebookApp) {
       return {
         title: '⚠️ ต้องเปิดผ่าน Browser ภายนอก',
@@ -75,7 +75,7 @@
         appName: 'Facebook',
       };
     }
-    
+
     if (browser.isInstagramApp) {
       return {
         title: '⚠️ ต้องเปิดผ่าน Browser ภายนอก',
@@ -84,7 +84,7 @@
         appName: 'Instagram',
       };
     }
-    
+
     if (browser.isWeChatApp) {
       return {
         title: '⚠️ ต้องเปิดผ่าน Browser ภายนอก',
@@ -93,21 +93,21 @@
         appName: 'WeChat',
       };
     }
-    
+
     return null;
   }
-  
+
   // ============================================
   // 2. INTERNET CONNECTIVITY CHECK
   // ============================================
-  
+
   async function checkInternetConnectivity(timeoutMs = 5000) {
     try {
       // ใช้ fetch เพื่อตรวจสอบการเชื่อมต่อ
       // ลองเรียก API ที่เล็กที่สุด (ไม่ใช้ Google Apps Script เพราะอาจช้า)
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-      
+
       try {
         const response = await fetch('https://www.google.com/favicon.ico', {
           method: 'HEAD',
@@ -128,24 +128,24 @@
       return false;
     }
   }
-  
+
   // ============================================
   // 3. GPS PERMISSION CHECK
   // ============================================
-  
+
   async function checkGPSPermission() {
     try {
       if (!navigator.permissions || !navigator.permissions.query) {
         // Browser ไม่รองรับ Permissions API
         return { status: 'unknown', message: 'Browser ไม่รองรับการตรวจสอบสิทธิ์' };
       }
-      
+
       const result = await navigator.permissions.query({ name: 'geolocation' });
-      
+
       if (result.state === 'granted') {
         return { status: 'granted', message: 'สิทธิ์ GPS ได้รับการอนุมัติแล้ว' };
       }
-      
+
       if (result.state === 'denied') {
         return {
           status: 'denied',
@@ -153,36 +153,39 @@
           instruction: 'กรุณาเปิดสิทธิ์ GPS ในการตั้งค่า > ความเป็นส่วนตัว > ตำแหน่ง',
         };
       }
-      
+
       if (result.state === 'prompt') {
         return { status: 'prompt', message: 'ระบบจะขอสิทธิ์ GPS เมื่อเริ่มอ่านตำแหน่ง' };
       }
-      
+
       return { status: 'unknown', message: 'ไม่สามารถตรวจสอบสิทธิ์ GPS' };
     } catch (err) {
       return { status: 'unknown', message: 'เกิดข้อผิดพลาดในการตรวจสอบสิทธิ์ GPS' };
     }
   }
-  
+
   // ============================================
   // 4. TIMEOUT WRAPPER
   // ============================================
-  
+
   function withTimeout(promise, timeoutMs, timeoutMessage = 'หมดเวลาการร้องขอ') {
-    return Promise.race([
-      promise,
-      new Promise((_, reject) => {
-        setTimeout(() => {
-          reject(new Error(timeoutMessage));
-        }, timeoutMs);
-      }),
-    ]);
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(timeoutMessage));
+      }, timeoutMs);
+    });
+
+    return Promise.race([promise, timeoutPromise]).finally(() => {
+      // ✅ เพิ่มบรรทัดนี้: ทำลายนาฬิกาจับเวลาทิ้งทันทีเมื่องานเสร็จสิ้น
+      clearTimeout(timeoutId);
+    });
   }
-  
+
   // ============================================
   // 5. GPS MULTI-READ SELECTOR
   // ============================================
-  
+
   /**
    * อ่าน GPS 5 ครั้ง แล้วเลือกค่าที่ดีที่สุด
    * เลือกตามลำดับความสำคัญ:
@@ -193,7 +196,7 @@
     if (!readings || readings.length === 0) {
       return null;
     }
-    
+
     // คำนวณระยะห่างจากจุดศูนย์กลาง
     const readingsWithDistance = readings.map((reading) => {
       const distance = calculateHaversineDistance(
@@ -207,7 +210,7 @@
         distanceCenter: distance,
       };
     });
-    
+
     // เรียงตามระยะห่างจากศูนย์กลาง (น้อยที่สุดขึ้นไป)
     readingsWithDistance.sort((a, b) => {
       if (a.distanceCenter !== b.distanceCenter) {
@@ -216,10 +219,10 @@
       // ถ้าระยะห่างเท่ากัน ให้เลือก accuracy ต่ำกว่า
       return a.accuracy - b.accuracy;
     });
-    
+
     return readingsWithDistance[0];
   }
-  
+
   /**
    * Haversine Formula - คำนวณระยะห่างระหว่าง 2 จุด (เมตร)
    */
@@ -230,13 +233,13 @@
     const a =
       Math.sin(dLat / 2) * Math.sin(dLat / 2) +
       Math.cos((lat1 * Math.PI) / 180) *
-        Math.cos((lat2 * Math.PI) / 180) *
-        Math.sin(dLng / 2) *
-        Math.sin(dLng / 2);
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
   }
-  
+
   /**
    * อ่าน GPS แบบ Multi-Read (5 ครั้ง)
    * @param {number} readCount - จำนวนครั้งที่ต้องอ่าน (default: 5)
@@ -244,39 +247,75 @@
    * @param {number} timeoutMs - Timeout รวม (default: 20000ms)
    * @param {function} onProgress - Callback เมื่อมีการอ่านค่าใหม่
    */
+  // ⏱️ TIMEOUT/POLLING MANAGEMENT (ปรับให้เหมือนระบบต้นแบบ farmchokchai_checkin):
+  // รวมจุด clearWatch/clearTimeout ไว้ที่เดียว (เทียบเท่า clearAppTimeout ของ Checkin) เพื่อ
+  // ให้แน่ใจว่าไม่มี watchPosition หรือ setTimeout ค้างอยู่เบื้องหลังไม่ว่าจะจบด้วยเหตุผลใด
+  // (ครบจำนวนที่อ่าน, error, timeout, หรือถูกยกเลิกจากภายนอกตอน retry/ออกจากหน้า)
+  // cancelToken (ไม่บังคับ) คือ object ว่างที่ผู้เรียกส่งเข้ามา ฟังก์ชันนี้จะเติม .cancel ให้
+  // เพื่อให้ผู้เรียกสามารถสั่งหยุดการอ่าน GPS และเคลียร์ Timer ได้ทันทีจากภายนอก
   async function readGPSMultiple(
     readCount = 5,
     intervalMs = 1000,
     timeoutMs = 20000,
     onProgress = null,
+    cancelToken = null,
   ) {
     return new Promise((resolve, reject) => {
       if (!navigator.geolocation) {
         reject(new Error('อุปกรณ์ไม่รองรับ GPS'));
         return;
       }
-      
+
       const readings = [];
       let readingsCollected = 0;
       let watchId = null;
       let timeoutId = null;
-      let lastAcceptedAt = Date.now();
-      
-      // Set timeout รวม
-      timeoutId = setTimeout(() => {
+      let settled = false;
+
+      // ✅ เปลี่ยนจาก Date.now() เป็น 0 เพื่อให้ระบบเก็บ GPS ค่าแรกสุดทันที ไม่ต้องรอ 1 วินาที
+      let lastAcceptedAt = 0;
+
+      // 🟢 จุดเดียวที่หยุด Polling (clearWatch) และ Timer (clearTimeout) ทั้งหมดทันที
+      function stopPolling() {
         if (watchId !== null) {
           navigator.geolocation.clearWatch(watchId);
+          watchId = null;
         }
-        reject(new Error(`หมดเวลาการอ่าน GPS (${timeoutMs}ms)`));
-      }, timeoutMs);
-      
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        if (cancelToken) cancelToken.cancel = null;
+      }
+
+      // 🟢 ให้ผู้เรียกภายนอก (เช่น onUnmounted หรือ Master Timeout) สั่งยกเลิกได้ทันที
+      if (cancelToken) {
+        cancelToken.cancel = function (reason) {
+          if (settled) return;
+          settled = true;
+          stopPolling();
+          reject(new Error(reason || 'ยกเลิกการอ่าน GPS'));
+        };
+      }
+
+      // Set timeout รวม (ถ้า timeoutMs เป็น 0/undefined = ไม่ตั้ง Deadline เลย รอจนกว่าจะได้ครบจำนวนที่กำหนด)
+      if (Number(timeoutMs) > 0) {
+        timeoutId = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          stopPolling();
+          // ✅ เปิด Reject กลับมา เพื่อให้ Error ชัดเจนถ้าหาไม่ครบ 5 ครั้งจริงๆ
+          reject(new Error(`หมดเวลาการอ่าน GPS (ไม่สามารถอ่านครบ ${readCount} ครั้งในเวลาที่กำหนด)`));
+        }, timeoutMs);
+      }
+
       watchId = navigator.geolocation.watchPosition(
         (pos) => {
+          if (settled) return;
           const lat = pos.coords.latitude;
           const lng = pos.coords.longitude;
           const accuracy = pos.coords.accuracy;
-          
-          // เรียก callback เพื่ออัปเดต UI
+
           if (onProgress) {
             onProgress({
               lat,
@@ -286,36 +325,31 @@
               total: readCount,
             });
           }
-          
-          // ตรวจสอบว่าครบ readCount หรือยัง
+
           if (readingsCollected >= readCount) {
             return;
           }
-          
-          // ตรวจสอบช่วงเวลา
+
           const now = Date.now();
           if (now - lastAcceptedAt < intervalMs) {
             return;
           }
           lastAcceptedAt = now;
-          
-          // เพิ่มค่าใหม่
+
           readings.push({ lat, lng, accuracy });
           readingsCollected++;
-          
-          // ตรวจสอบว่าครบแล้วหรือยัง
+
           if (readingsCollected >= readCount) {
-            navigator.geolocation.clearWatch(watchId);
-            clearTimeout(timeoutId);
+            settled = true;
+            stopPolling(); // ปิด Polling และนาฬิกาภายในเมื่อครบจำนวนที่กำหนด
             resolve(readings);
           }
         },
         (err) => {
-          if (watchId !== null) {
-            navigator.geolocation.clearWatch(watchId);
-          }
-          clearTimeout(timeoutId);
-          
+          if (settled) return;
+          settled = true;
+          stopPolling();
+
           let message = 'เกิดข้อผิดพลาด GPS';
           if (err.code === 1) {
             message = 'ถูกปฏิเสธสิทธิ์การเข้าถึงตำแหน่ง';
@@ -328,17 +362,18 @@
         },
         {
           enableHighAccuracy: true,
-          timeout: 10000,
+          // ⏱️ ไม่ตั้ง timeout ให้ watchPosition (ปล่อยเป็นค่า default = Infinity ตาม spec)
+          // เพื่อไม่ให้เบราว์เซอร์ยิง error "หมดเวลาการขอตำแหน่ง" เองถ้าไม่มีสัญญาณ GPS ชั่วคราว
           maximumAge: 0,
         },
       );
     });
   }
-  
+
   // ============================================
   // 6. ERROR NORMALIZER
   // ============================================
-  
+
   function normalizeError(err, context = '') {
     if (!err) {
       return {
@@ -349,10 +384,10 @@
         originalError: null,
       };
     }
-    
+
     const message = String(err?.message || err?.toString() || '').toLowerCase();
     const code = err?.code;
-    
+
     // GPS Errors
     if (message.includes('gps') || message.includes('geolocation') || message.includes('location')) {
       if (message.includes('denied') || message.includes('permission')) {
@@ -381,7 +416,7 @@
         originalError: err,
       };
     }
-    
+
     // Network/Internet Errors
     if (message.includes('network') || message.includes('offline') || message.includes('internet')) {
       return {
@@ -392,7 +427,7 @@
         originalError: err,
       };
     }
-    
+
     // Timeout Errors
     if (message.includes('timeout') || message.includes('หมดเวลา')) {
       return {
@@ -403,7 +438,7 @@
         originalError: err,
       };
     }
-    
+
     // Firebase/Auth Errors
     if (message.includes('firebase') || message.includes('auth') || message.includes('token')) {
       if (message.includes('revoked') || message.includes('unauthorized')) {
@@ -423,7 +458,7 @@
         originalError: err,
       };
     }
-    
+
     // Server/API Errors
     if (message.includes('server') || message.includes('api') || message.includes('script')) {
       if (code === 403 || code === 401 || message.includes('forbidden') || message.includes('unauthorized')) {
@@ -443,7 +478,7 @@
         originalError: err,
       };
     }
-    
+
     // Geofence Errors
     if (message.includes('geofence') || message.includes('boundary') || message.includes('area')) {
       return {
@@ -454,7 +489,7 @@
         originalError: err,
       };
     }
-    
+
     // Default
     return {
       type: 'generic_error',
@@ -464,31 +499,31 @@
       originalError: err,
     };
   }
-  
+
   // ============================================
   // EXPORT
   // ============================================
-  
+
   window.EnhancedUtils = {
     // Browser Detection
     detectBrowserType,
     isAllowedBrowser,
     getBrowserWarningMessage,
-    
+
     // Internet Connectivity
     checkInternetConnectivity,
-    
+
     // GPS Permission
     checkGPSPermission,
-    
+
     // Timeout Wrapper
     withTimeout,
-    
+
     // GPS Multi-Read
     selectBestGPSReading,
     calculateHaversineDistance,
     readGPSMultiple,
-    
+
     // Error Normalizer
     normalizeError,
   };

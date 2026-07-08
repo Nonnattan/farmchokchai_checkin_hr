@@ -166,8 +166,19 @@
       }
     }
 
+    // ⏱️ TIMEOUT MANAGEMENT (ปรับให้เหมือนระบบต้นแบบ farmchokchai_checkin):
+    // สำรองเผื่อ AbortController ยกเลิก connection ไม่สำเร็จจริง (เจอบนเน็ตมือถือบางเครือข่าย
+    // ที่ redirect ไป script.googleusercontent.com แล้วค้าง ไม่ error ไม่ timeout เอง) —
+    // ใช้ Promise.race บังคับให้ error ออกมาแน่นอนภายในเวลาที่กำหนด ไม่ให้หน้าจอหมุนค้างตลอดไป
+    // (ไม่กระทบ Business Logic/ผลลัพธ์ของ Request ที่สำเร็จตามปกติ เป็นแค่ตัวกันค้างเพิ่มเติม)
+    const hardTimeoutMs = Number(timeoutMs) > 0 ? Number(timeoutMs) + 5000 : 25000;
+    let hardTimeoutId = null;
+    const hardTimeout = new Promise((_, reject) => {
+      hardTimeoutId = setTimeout(() => reject(new Error("หมดเวลาการร้องขอ")), hardTimeoutMs);
+    });
+
     try {
-      const response = await fetch(url, options);
+      const response = await Promise.race([fetch(url, options), hardTimeout]);
       const text = await response.text();
       let data = {};
       try {
@@ -184,6 +195,7 @@
       throw err;
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
+      if (hardTimeoutId) clearTimeout(hardTimeoutId);
     }
   }
 

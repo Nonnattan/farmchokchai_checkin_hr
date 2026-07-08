@@ -1,4 +1,4 @@
-const { createApp, computed, onMounted, ref, nextTick, watch } = Vue;
+const { createApp, computed, onMounted, onUnmounted, ref, nextTick, watch } = Vue;
 const common = window.CheckinCommon;
 const utils = window.EnhancedUtils;
 
@@ -10,7 +10,7 @@ const AREA_ID_STORAGE_TTL_MS = 10 * 60 * 1000;
 // ⚠️ ENHANCED: ปรับ GPS readings จาก 10 เป็น 5 ครั้ง และเพิ่ม Timeout
 const MAX_GPS_READINGS = 5;
 const READING_INTERVAL_MS = 1000;
-const GPS_TIMEOUT_MS = 20000; // GPS Timeout 20 วินาที
+const GPS_TIMEOUT_MS = 20000; // ⚠️ ไม่ได้ใช้เป็น Deadline รวมของการอ่าน GPS แล้ว (ตัดออกตามที่ต้องการ — รอจนกว่าจะครบจำนวน) เก็บค่าคงที่ไว้เผื่ออ้างอิง/ปรับใช้ในอนาคต
 const GENERAL_TIMEOUT_MS = 30000; // General Timeout 30 วินาที
 
 const TEST_MAX_GPS_READINGS = 10;
@@ -121,6 +121,14 @@ createApp({
       { id: 'save', label: 'บันทึกข้อมูล', status: 'pending' },
     ]);
 
+    // 🟢 บอกว่ากำลังบังคับเปิด Browser ภายนอกอยู่ (ให้ onMounted รู้ว่าไม่ต้องทำขั้นตอนถัดไปในหน้านี้)
+    const externalOpenTriggered = ref(false);
+
+    // 🟢 Generation Counter (นำมาจาก Project ต้นแบบ farmchokchai_checkin): ป้องกัน Race Condition
+    // เวลากด "ลองใหม่" ซ้อนกับ Request รอบเก่าที่ยังค้างอยู่ ไม่ให้ผลลัพธ์/ข้อความของรอบเก่า
+    // (ที่เพิ่ง Resolve/Timeout ช้า) มาทับ State ของรอบใหม่ที่กำลังทำงานอยู่
+    const bootGeneration = ref(0);
+
     // ⚠️ ENHANCED: Timeout/Error Dialog แบบ Modal พร้อมปุ่ม "ลองใหม่" — ใช้ร่วมกันทุก step ที่มี Timeout
     const timeoutDialog = ref({ visible: false, title: '', message: '', action: null });
 
@@ -173,6 +181,18 @@ createApp({
     let gpsReadings = [];
     let watchId = null;
     let samplingStartTime = null;
+    // 🟢 TIMEOUT/POLLING MANAGEMENT (เหมือนระบบต้นแบบ farmchokchai_checkin):
+    // cancelToken ใช้สั่งหยุด readGPSMultiple (watchPosition + timer ภายใน) ได้ทันทีจากภายนอก
+    // เช่นตอนออกจากหน้า (onUnmounted) หรือเริ่มรอบใหม่ (retry) ไม่ให้ Polling รอบเก่าค้างอยู่เบื้องหลัง
+    let gpsCancelToken = null;
+
+    // 🟢 หยุด GPS Polling ที่กำลังทำงานอยู่ทันที (ถ้ามี) — จุดเดียวที่ใช้เคลียร์ Polling ของหน้านี้
+    function stopGPSSampling() {
+      if (gpsCancelToken && typeof gpsCancelToken.cancel === "function") {
+        gpsCancelToken.cancel("ยกเลิกการอ่าน GPS");
+      }
+      gpsCancelToken = null;
+    }
 
     let map = null;
     let boundaryRect = null;
@@ -225,7 +245,18 @@ createApp({
     async function checkBrowserType() {
       try {
         updateLoadingStep('browser', 'loading');
-        
+
+        const browserInfo = utils.detectBrowserType();
+
+        // 🟢 บังคับเปิด Browser ภายนอก: ถ้าเปิดผ่าน LINE In-App Browser ห้ามหยุด Flow ที่นี่
+        // ให้ปล่อยผ่านไปให้ initLiff() ใช้ liff.isInClient() (ทางการจาก LIFF SDK) ตรวจสอบและ
+        // เรียก liff.openWindow({ external: true }) บังคับเปิด Chrome/Safari ให้อัตโนมัติ
+        // (เหมือนพฤติกรรมของ Project ต้นแบบ farmchokchai_checkin)
+        if (browserInfo.isLineApp) {
+          updateLoadingStep('browser', 'success');
+          return true;
+        }
+
         if (!utils.isAllowedBrowser()) {
           const warning = utils.getBrowserWarningMessage();
           browserWarning.value = warning;
@@ -250,10 +281,12 @@ createApp({
 
     // ⚠️ ENHANCED: ตรวจสอบ Internet connectivity
     async function checkInternet() {
+      const myGeneration = bootGeneration.value; // 🟢 จำรอบปัจจุบันไว้ก่อน await
       try {
         updateLoadingStep('internet', 'loading');
         
         const isOnline = await utils.checkInternetConnectivity(5000);
+        if (myGeneration !== bootGeneration.value) return false; // 🟢 ถูกลองใหม่ไปแล้ว ข้ามผลลัพธ์รอบเก่า
         internetConnected.value = isOnline;
         
         if (!isOnline) {
@@ -292,6 +325,7 @@ createApp({
     }
 
     async function loadConfig() {
+      const myGeneration = bootGeneration.value; // 🟢 จำรอบปัจจุบันไว้ก่อน await
       try {
         updateLoadingStep('config', 'loading');
         setStatusBrowser("loading", "โหลดการตั้งค่าพื้นที่...", "");
@@ -301,6 +335,8 @@ createApp({
           GENERAL_TIMEOUT_MS,
           "หมดเวลาการโหลดการตั้งค่าพื้นที่ (30 วินาที)",
         );
+
+        if (myGeneration !== bootGeneration.value) return; // 🟢 ถูกลองใหม่ไปแล้ว ข้ามผลลัพธ์รอบเก่า
 
         if (areaId && String(area?.areaId || "").trim() !== String(areaId).trim()) {
           throw new Error(
@@ -323,6 +359,7 @@ createApp({
           maxAccuracy: maxAccuracy.value,
         });
       } catch (err) {
+        if (myGeneration !== bootGeneration.value) return; // 🟢 ถูกลองใหม่ไปแล้ว ข้าม Error ของรอบเก่า
         console.error("[loadConfig] Error:", err);
         updateLoadingStep('config', 'error');
         
@@ -369,6 +406,7 @@ createApp({
     }
 
     async function initLiff() {
+      const myGeneration = bootGeneration.value; // 🟢 จำรอบปัจจุบันไว้ก่อน await
       try {
         updateLoadingStep('liff', 'loading');
         setStatusBrowser("loading", "เชื่อมต่อ LINE...", "");
@@ -387,10 +425,13 @@ createApp({
           "หมดเวลาการเริ่มต้น LIFF (12 วินาที)",
         );
 
+        if (myGeneration !== bootGeneration.value) return; // 🟢 ถูกลองใหม่ไปแล้ว ข้ามผลลัพธ์รอบเก่า
+
         liffReady.value = true;
 
         // ⚠️ ENHANCED: ตรวจสอบ Browser type ผ่าน LIFF
         if (liff.isInClient()) {
+          externalOpenTriggered.value = true;
           setStatusBrowser(
             "idle",
             "กำลังเปิดใน Browser ภายนอก...",
@@ -405,16 +446,19 @@ createApp({
 
         if (liff.isLoggedIn()) {
           try {
-            profile.value = await withTimeout(
+            const tempProfile = await withTimeout(
               liff.getProfile(),
               8000,
               "getProfile timeout",
             );
+            if (myGeneration !== bootGeneration.value) return; // 🟢 ถูกลองใหม่ไปแล้ว ข้ามผลลัพธ์รอบเก่า
+            profile.value = tempProfile;
             authState.value = "logged_in";
             updateLoadingStep('liff', 'success');
             setStatusBrowser("idle", "พร้อมเช็คอิน", "กดปุ่มด้านล่างเพื่อเริ่มเช็คอิน");
             console.log("[LIFF] โหลด Profile สำเร็จ:", profile.value?.displayName);
           } catch (profileErr) {
+            if (myGeneration !== bootGeneration.value) return; // 🟢 ถูกลองใหม่ไปแล้ว ข้าม Error ของรอบเก่า
             console.warn("[LIFF] getProfile ล้มเหลว:", profileErr);
             if (isTokenRevokedError(profileErr)) {
               console.log("[LIFF] Token revoked — ล้าง session และ login ใหม่");
@@ -444,6 +488,7 @@ createApp({
           liff.login({ redirectUri: getReturnUrl(areaId) });
         }
       } catch (err) {
+        if (myGeneration !== bootGeneration.value) return; // 🟢 ถูกลองใหม่ไปแล้ว ข้าม Error ของรอบเก่า
         console.error("[LIFF] initLiff error:", err);
         updateLoadingStep('liff', 'error');
         
@@ -632,6 +677,9 @@ createApp({
     async function startGPSSampling() {
       if (authState.value !== "logged_in" || samplingInProgress.value) return;
 
+      // 🟢 กันไม่ให้ Polling รอบเก่า (ถ้ามีหลงเหลือ) ทำงานซ้อนกับรอบใหม่
+      stopGPSSampling();
+
       samplingInProgress.value = true;
       gpsReadings = [];
       readingCount.value = 0;
@@ -665,7 +713,9 @@ createApp({
 
       const MAX_READINGS = testMode ? TEST_MAX_GPS_READINGS : MAX_GPS_READINGS;
       const READING_INTERVAL = testMode ? TEST_READING_INTERVAL_MS : READING_INTERVAL_MS;
-      const TIMEOUT = testMode ? GENERAL_TIMEOUT_MS : GPS_TIMEOUT_MS;
+      // ⏱️ ไม่ตั้ง Deadline รวมให้การอ่าน GPS อีกต่อไป (ตามที่ต้องการ) — รอจนกว่าจะได้ครบ MAX_READINGS
+      // (ยังยกเลิกได้ตามปกติผ่าน gpsCancelToken เช่น ตอนออกจากหน้า หรือกดลองใหม่)
+      const TIMEOUT = 0;
 
       setStatus(
         "loading",
@@ -675,11 +725,15 @@ createApp({
 
       try {
         // ⚠️ ENHANCED: ใช้ readGPSMultiple จาก utils
+        gpsCancelToken = {};
         const readings = await utils.readGPSMultiple(
           MAX_READINGS,
           READING_INTERVAL,
           TIMEOUT,
           (progress) => {
+            // ตรวจสอบว่ายังอยู่ในกระบวนการ sampling หรือไม่ (ป้องกันกรณีถูก cancel/retry ระหว่างทาง)
+            if (!samplingInProgress.value) return;
+
             readingCount.value = progress.count;
             updateCurrentPosition(progress.lat, progress.lng, progress.accuracy);
             
@@ -689,7 +743,12 @@ createApp({
               `ล่าสุด: ละติจูด ${progress.lat.toFixed(6)}, ลองจิจูด ${progress.lng.toFixed(6)}, ความแม่นยำ ${progress.accuracy.toFixed(1)} เมตร`,
             );
           },
+          gpsCancelToken,
         );
+        gpsCancelToken = null; // 🟢 Polling จบแล้ว (สำเร็จ) ไม่ต้องเก็บ token ไว้อีก
+
+        // ถ้า sampling ถูกยกเลิกไปแล้ว (เช่น กดลองใหม่) ไม่ต้องทำต่อ
+        if (!samplingInProgress.value) return;
 
         gpsReadings = readings;
         samplingInProgress.value = false;
@@ -749,10 +808,14 @@ createApp({
               common.setPendingCheckin(payload);
               clearPendingFlow();
 
+              // ⚠️ BUGFIX: มั่นใจว่า samplingInProgress เป็น false ก่อน redirect
+              samplingInProgress.value = false;
+
               setTimeout(() => {
                 window.location.href = "../processing.html";
               }, 1000);
             } else {
+              samplingInProgress.value = false;
               updateLoadingStep('distance', 'error');
               setStatus(
                 "error",
@@ -765,6 +828,7 @@ createApp({
         }
       } catch (err) {
         console.error("[GPS Sampling] Error:", err);
+        gpsCancelToken = null;
         samplingInProgress.value = false;
         updateLoadingStep('gps', 'error');
 
@@ -786,6 +850,7 @@ createApp({
     }
 
     async function retryInit() {
+      bootGeneration.value++; // 🟢 เริ่มรอบใหม่ — บล็อกผลลัพธ์/Error ของ Request รอบเก่าที่อาจค้างอยู่
       authState.value = "checking";
       setStatus("idle", "กำลังลองเชื่อมต่อใหม่...", "กรุณารอสักครู่");
       resetLoadingSteps(['liff', 'config']);
@@ -823,14 +888,29 @@ createApp({
           return;
         }
 
+        // 🟢 ถ้าเป็น LINE In-App Browser: รีบเชื่อมต่อ LIFF แล้วบังคับเปิด Browser ภายนอกทันที
+        // โดยยังไม่ต้องรอเช็ค Internet/โหลด Config ก่อน (ย้ายไปเช็คหลังเปิด Browser นอกแล้วแทน)
+        // เพื่อให้ผู้ใช้เด้งออกจาก LINE ไป Chrome/Safari ได้เร็วที่สุดทันทีที่สแกน QR
+        const browserInfo = utils.detectBrowserType();
+        if (browserInfo.isLineApp) {
+          await initLiff();
+          if (externalOpenTriggered.value) {
+            return; // กำลังเปลี่ยนไปเปิดหน้านี้ใน Browser นอกแล้ว ไม่ต้องทำอย่างอื่นต่อในหน้านี้
+          }
+          // liff.init ไม่สำเร็จ หรือไม่เข้าเงื่อนไขบังคับเปิด Browser นอก (เช่น เกิด Error) ให้ทำงานต่อตาม Flow ปกติด้านล่าง
+        }
+
         // ⚠️ ENHANCED: ตรวจสอบ Internet
         const internetOk = await checkInternet();
         if (!internetOk) {
           return;
         }
 
-        // โหลด Config และ Init LIFF พร้อมกัน
-        await Promise.all([loadConfig(), initLiff()]);
+        // โหลด Config และ Init LIFF พร้อมกัน (initLiff จะรู้เองว่าทำไปแล้วรอบหนึ่งหรือยังผ่าน bootGeneration/liffReady)
+        await Promise.all([
+          loadConfig(),
+          browserInfo.isLineApp && liffReady.value ? Promise.resolve() : initLiff(),
+        ]);
         await nextTick();
         initMap();
       } catch (err) {
@@ -855,6 +935,12 @@ createApp({
       if (map && mapEl.value) {
         drawBoundary();
       }
+    });
+
+    // 🟢 ป้องกัน Timer/Polling ค้างเบื้องหลังเมื่อออกจากหน้า (เหมือนระบบต้นแบบ farmchokchai_checkin)
+    onUnmounted(() => {
+      stopGPSSampling();
+      closeTimeoutDialog();
     });
 
     return {

@@ -77,11 +77,18 @@ createApp({
         return;
       }
       qrEl.value.innerHTML = "";
-      const url = `${location.origin}${location.pathname.replace(/[^/]*$/, "")}user/checkin.html?areaId=${encodeURIComponent(area.areaId || area.qr_code || "")}&site=${encodeURIComponent(area.areaName || area.remark || "")}`;
+      const params = `areaId=${encodeURIComponent(area.areaId || area.qr_code || "")}&site=${encodeURIComponent(area.areaName || area.remark || "")}`;
       const t = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).replace(/-/g, "").slice(0, 10).toUpperCase();
       token.value = t;
       // ถ้าติ๊ก Test Mode ให้เพิ่ม ?test=1 ใน URL
-      const finalUrl = testMode.value ? url + "&test=1" : url;
+      const finalParams = testMode.value ? params + "&test=1" : params;
+      // 🟢 บังคับเปิด Browser ภายนอก: QR ต้องเข้ารหัสเป็น https://liff.line.me/{LIFF_ID}?...
+      // ไม่ใช่ URL ตรงของเว็บ เพราะถ้าเปิดด้วย URL ธรรมดา LINE QR Scanner จะโชว์หน้า Preview
+      // ให้กดลิงก์ "เปิด" ก่อน แล้วเปิดใน in-app browser ปกติ (ไม่ใช่ LIFF Context) ทำให้
+      // liff.isInClient()/liff.openWindow ไม่สามารถบังคับออกไป Chrome/Safari ได้ตามที่ต้องการ
+      // (เหมือนพฤติกรรมของ Project ต้นแบบ farmchokchai_checkin — ต้องชี้ Endpoint URL ของ LIFF
+      // ใน LINE Developers Console ไปที่ .../user/checkin.html)
+      const finalUrl = `https://liff.line.me/${common.LIFF_ID}?${finalParams}`;
       qrUrl.value = finalUrl;
       new QRCode(qrEl.value, {
         text: finalUrl,
