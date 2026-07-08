@@ -6,7 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title>LINE เช็คอิน</title>
+    <title>LINE เช็คอิน (Enhanced)</title>
 
     <link rel="stylesheet" href="../assets/styles.css" />
     <link
@@ -127,6 +127,7 @@
         margin: 8px 0 0 0;
         opacity: 0.9;
         line-height: 1.5;
+        white-space: pre-wrap;
       }
 
       .btn-massive {
@@ -232,36 +233,6 @@
         font-size: 12px;
         color: #64748b;
         line-height: 1.5;
-      }
-
-      .status-row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-      }
-
-      .small-pill {
-        display: inline-flex;
-        align-items: center;
-        padding: 6px 10px;
-        border-radius: 999px;
-        background: #f8fafc;
-        color: #334155;
-        font-size: 12px;
-        border: 1px solid #e2e8f0;
-      }
-
-      .small-pill.good {
-        background: #ecfdf5;
-        border-color: #a7f3d0;
-        color: #047857;
-      }
-
-      .small-pill.bad {
-        background: #fef2f2;
-        border-color: #fecaca;
-        color: #b91c1c;
       }
 
       .accuracy-display {
@@ -381,6 +352,7 @@
               </div>
             </div>
 
+            <!-- GPS Details -->
             <div class="accuracy-display">
               <div v-if="currentLat !== null && currentLng !== null">
                 <b>ละติจูด :</b> {{ currentLat.toFixed(6) }}
