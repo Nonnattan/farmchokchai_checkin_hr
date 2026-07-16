@@ -346,7 +346,11 @@ createApp({
 
         config.value = common.normalizeConfig(area);
         maxAccuracy.value = Number(config.value.maxAccuracy || 30);
-        forgetAreaId();
+        // ⚠️ FIX: ห้ามลบ areaId ที่จำไว้ทิ้งตรงนี้ เพราะปุ่ม "เช็กอินอีกครั้ง" ในหน้า success
+        // จะลิงก์กลับมาที่หน้านี้โดยไม่มี areaId แนบไปกับ URL — ถ้าลบทิ้งไปแล้ว ระบบจะหา
+        // areaId ไม่เจอและ fallback ไปใช้ "พื้นที่แรกสุด" แทน ทำให้เอา GPS ตำแหน่งเดิมไปเทียบ
+        // กับจุดศูนย์กลางของพื้นที่อื่น แล้วฟ้องว่าอยู่นอกเขตทั้งที่ยืนอยู่จุดเดิม
+        rememberAreaId(config.value.areaId || areaId);
         
         updateLoadingStep('config', 'success');
 

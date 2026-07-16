@@ -12,18 +12,27 @@ const { createApp, ref, onMounted } = Vue;
         setup() {
           const status = ref("กำลังโหลดข้อมูล...");
           const lastCheckin = ref(null);
+          const checkinAgainUrl = ref("./user/checkin.html");
           onMounted(() => {
             sessionStorage.removeItem("checkin_flow_running");
             try {
               const raw = localStorage.getItem("last_checkin");
-              if (raw) lastCheckin.value = JSON.parse(raw);
+              if (raw) {
+                lastCheckin.value = JSON.parse(raw);
+                // ⚠️ FIX: แนบ areaId ของการเช็คอินล่าสุดไปกับลิงก์ "เช็กอินอีกครั้ง"
+                // เพื่อไม่ให้หน้าเช็คอินตกไปใช้ "พื้นที่แรกสุดในระบบ" แทนพื้นที่ที่ผู้ใช้สแกนมาจริง
+                const areaId = lastCheckin.value?.areaId;
+                if (areaId) {
+                  checkinAgainUrl.value = `./user/checkin.html?areaId=${encodeURIComponent(areaId)}`;
+                }
+              }
               status.value = "เช็กอินสำเร็จ";
             } catch (err) {
               console.error(err);
               status.value = "เช็กอินสำเร็จ";
             }
           });
-          return { status, lastCheckin, common };
+          return { status, lastCheckin, checkinAgainUrl, common };
         },
         template: `
           <div class="container">
@@ -41,7 +50,7 @@ const { createApp, ref, onMounted } = Vue;
                 <div v-if="lastCheckin.email">อีเมล: {{ lastCheckin.email }}</div>
                 <div>เวลา: {{ lastCheckin.timeText || common.formatDate(lastCheckin.time) }}</div>
               </div>
-              <a class="btn" href="./user/checkin.html">เช็กอินอีกครั้ง</a>
+              <a class="btn" :href="checkinAgainUrl">เช็กอินอีกครั้ง</a>
             </div>
           </div>
         `,
