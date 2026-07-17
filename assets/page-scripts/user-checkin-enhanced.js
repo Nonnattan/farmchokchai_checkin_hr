@@ -528,6 +528,20 @@ createApp({
       }
     }
 
+    // ⚠️ BUGFIX: สร้างรหัสอ้างอิงการเช็คอินนี้ (ครั้งเดียวต่อ 1 รอบเช็คอิน) เพื่อแก้บั๊ก Client
+    // เห็น Error "ระบบมีผู้ใช้งานพร้อมกันจำนวนมาก" ทั้งที่ Backend บันทึกสำเร็จแล้ว — รหัสนี้จะถูก
+    // เก็บไว้ในข้อมูลที่ persist ผ่าน common.setPendingCheckin() และ processing.html จะอ่านค่า
+    // เดิมกลับมาใช้ซ้ำทุกครั้งที่ "ลองใหม่" (ไม่สุ่มใหม่) ทำให้ Apps Script รู้ว่าเป็นการเช็คอินครั้ง
+    // เดียวกัน ไม่ใช่การเช็คอินใหม่ซ้อนกัน (ดูฝั่ง saveLog()/getCachedCheckinResult() ใน Code.gs)
+    function generateCheckinRequestId() {
+      try {
+        if (window.crypto && typeof window.crypto.randomUUID === "function") {
+          return window.crypto.randomUUID();
+        }
+      } catch (e) { }
+      return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+
     function buildPayload(lat, lng, accuracy) {
       const pending = common.getPendingCheckin() || {};
       const decoded = liff.getDecodedIDToken
@@ -550,6 +564,8 @@ createApp({
         maxAccuracy: maxAccuracy.value,
         time: common.formatBangkokNow ? common.formatBangkokNow() : new Date().toISOString(),
         userId: profile.value?.userId || "",
+        // ใช้ค่าเดิมถ้า pending มีอยู่แล้ว (กันเผื่อ buildPayload ถูกเรียกซ้ำ) ไม่งั้นสุ่มใหม่ครั้งเดียว
+        checkinRequestId: pending.checkinRequestId || generateCheckinRequestId(),
       };
 
       console.log("[UserCheckin] buildPayload:", {

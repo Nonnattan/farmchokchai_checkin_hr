@@ -191,6 +191,45 @@ function doGet(e) {
 }
 
 function doPost(e) {
+  // ตรวจสอบว่ามีข้อมูลส่งมาหรือไม่ (ย้ายมาก่อนล็อก เพราะแค่ parse JSON ไม่ต้องรอคิว
+  // และต้อง parse ก่อน เพื่อเอา action/checkinRequestId ไปเช็ก cache ด้านล่าง)
+  if (!e.postData || !e.postData.contents) {
+    return responseJson({ ok: false, error: "ไม่พบข้อมูลที่ส่งมา" });
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(e.postData.contents);
+  } catch (err) {
+    return responseJson({ ok: false, error: "รูปแบบข้อมูลที่ส่งมาไม่ถูกต้อง" });
+  }
+  const action = payload.action;
+
+  // =======================================================================
+  // BUGFIX (Client เห็น Error "ระบบมีผู้ใช้งานพร้อมกันจำนวนมาก" ทั้งที่ Backend บันทึกสำเร็จแล้ว):
+  // -----------------------------------------------------------------------
+  // สาเหตุจริง: Client มี Timeout ฝั่งตัวเอง (AbortController + Promise.race hard-timeout ใน
+  // common.js) ถ้า Apps Script execution ช้ากว่านั้น (เช่น Sheet โตขึ้นเรื่อยๆ ทำให้อ่านข้อมูลช้า —
+  // ดูจุดแก้ใน saveLog()/saveTestLog() ด้านล่าง) Client จะ "ยกเลิกการรอ" แล้วขึ้น dialog ให้ผู้ใช้
+  // กด "ลองใหม่" แต่การ abort() ฝั่ง Client ไม่ได้สั่งให้ Apps Script หยุดทำงานจริง (Google รัน
+  // execution นั้นต่อจนจบอยู่ดี) พอผู้ใช้กด "ลองใหม่" มันคือการยิง POST เช็คอิน "ก้อนข้อมูลเดิม"
+  // ซ้ำไปอีกรอบ ขณะที่ request แรกอาจกำลังจะเขียนเสร็จพอดี → request ที่สองต้องรอคิว lock แล้ว
+  // อาจโดน timeout ของ lock (10 วิ) ขึ้น error ให้เห็น ทั้งที่ request แรกเขียนข้อมูลสำเร็จไปแล้ว
+  //
+  // วิธีแก้: ให้ Client แนบ checkinRequestId (สุ่มครั้งเดียวตอนสร้างข้อมูลเช็คอิน แล้วใช้ค่าเดิมซ้ำ
+  // ทุกครั้งที่ "ลองใหม่" — ดู buildPayload() ใน user-checkin-enhanced.js) มาด้วยทุกครั้งที่บันทึก log
+  // ถ้าเจอว่า checkinRequestId นี้เคยบันทึกสำเร็จไปแล้ว (เก็บไว้ใน CacheService สูงสุด 6 ชม.)
+  // ให้ตอบผลลัพธ์เดิมกลับไปทันที ไม่ต้องเข้าคิว lock ซ้ำ ไม่เขียนแถวซ้ำ และไม่โยน error หลอกๆ
+  // ให้ผู้ใช้เห็นทั้งที่ backend ทำสำเร็จแล้ว
+  // =======================================================================
+  if (action === "logs") {
+    const requestId = String(payload.checkinRequestId || "").trim();
+    if (requestId) {
+      const cached = getCachedCheckinResult(requestId);
+      if (cached) return responseJson(cached);
+    }
+  }
+
   // =======================================================================
   // ล็อกสคริปต์ก่อนเขียนข้อมูลลง Google Sheet ทุกครั้ง (จุดสำคัญที่แก้บั๊ก Logs มีแค่แถวเดียว)
   // -----------------------------------------------------------------------
@@ -205,18 +244,20 @@ function doPost(e) {
   try {
     const gotLock = lock.tryLock(10000); // รอคิวได้สูงสุด 10 วินาที
     if (!gotLock) {
+      // เช็กอีกรอบก่อนโยน error: เผื่อ request ที่ถือ lock อยู่ (อาจเป็น request เดิมของเรา
+      // ที่ Client เคย timeout ทิ้งไปแล้วลองใหม่) เพิ่งเขียนสำเร็จและ cache ผลลัพธ์ไปพอดีระหว่างที่เรารอคิว
+      if (action === "logs") {
+        const requestId = String(payload.checkinRequestId || "").trim();
+        if (requestId) {
+          const cachedAfterWait = getCachedCheckinResult(requestId);
+          if (cachedAfterWait) return responseJson(cachedAfterWait);
+        }
+      }
       throw new Error(
         "ระบบมีผู้ใช้งานพร้อมกันจำนวนมาก กรุณาลองกดเช็คอินใหม่อีกครั้ง",
       );
     }
 
-    // ตรวจสอบว่ามีข้อมูลส่งมาหรือไม่
-    if (!e.postData || !e.postData.contents) {
-      throw new Error("ไม่พบข้อมูลที่ส่งมา");
-    }
-
-    const payload = JSON.parse(e.postData.contents);
-    const action = payload.action;
     let result = {};
 
     if (action === "location" || action === "areas") {
@@ -279,6 +320,36 @@ function responseJson(data) {
 function numOr(value, fallback) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+// ⚠️ BUGFIX: cache ผลลัพธ์การเช็คอิน (keyed ด้วย checkinRequestId ที่ Client สุ่มมาครั้งเดียว
+// ต่อการเช็คอิน 1 ครั้ง) ใช้ตัดวงจร "Client timeout แล้วลองใหม่ ทั้งที่ backend เขียนสำเร็จแล้ว"
+// CacheService เก็บได้สูงสุด 6 ชม. (21600 วิ) ต่อ key ซึ่งยาวนานพอเทียบกับเวลาที่ผู้ใช้จะกด "ลองใหม่"
+const CHECKIN_CACHE_PREFIX = "checkin_result:";
+const CHECKIN_CACHE_TTL_SEC = 21600;
+
+function getCachedCheckinResult(requestId) {
+  if (!requestId) return null;
+  try {
+    const raw = CacheService.getScriptCache().get(CHECKIN_CACHE_PREFIX + requestId);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (e) {
+    return null; // cache ใช้ไม่ได้ก็ไม่เป็นไร ให้ไปเขียนตามปกติ ไม่บล็อกการเช็คอิน
+  }
+}
+
+function cacheCheckinResult(requestId, result) {
+  if (!requestId) return;
+  try {
+    CacheService.getScriptCache().put(
+      CHECKIN_CACHE_PREFIX + requestId,
+      JSON.stringify(result),
+      CHECKIN_CACHE_TTL_SEC,
+    );
+  } catch (e) {
+    // เขียน cache ไม่สำเร็จก็ไม่ต้องทำให้การเช็คอินล้มเหลว
+  }
 }
 
 function getSheetByNameOrCreate(sheetName) {
@@ -1195,8 +1266,16 @@ function saveLog(payload) {
   );
 
   const sheet = ensureLogsSheetSchema();
-  const data = sheet.getDataRange().getValues();
-  const headers = data[0];
+  // ⚠️ BUGFIX (สาเหตุหลักของ Client Timeout / "ระบบมีผู้ใช้งานพร้อมกันจำนวนมาก"):
+  // เดิมใช้ sheet.getDataRange().getValues() เพื่อจะเอาแค่ "แถวหัวคอลัมน์" (data[0]) แถวเดียว
+  // แต่ getDataRange() จะอ่านข้อมูล "ทุกแถว" ของ Sheet Logs ทั้งหมดกลับมาเสมอ ยิ่ง Sheet
+  // มีประวัติเช็คอินสะสมมากขึ้นเรื่อยๆ (เป็นพันแถวขึ้นไป) การอ่านทั้งชีตทุกครั้งที่มีคนเช็คอิน 1 คน
+  // (ขณะที่ยังถือ script lock ค้างอยู่ด้วย) ก็จะยิ่งช้าลงเรื่อยๆ จนวันหนึ่งช้าเกินเวลาที่ Client
+  // รอไหว (30 วิ) → Client ตัดใจ timeout ทั้งที่ Apps Script ยังทำงานต่อจนเขียนสำเร็จอยู่ดี
+  // (Client abort ไม่ได้สั่งให้ execution ฝั่ง Server หยุดจริง) แก้โดยอ่านเฉพาะแถวหัวคอลัมน์แถวเดียว
+  const headers = sheet
+    .getRange(1, 1, 1, sheet.getLastColumn())
+    .getValues()[0];
 
   // BUGFIX (ไม่บันทึกค่า accuracy): เดิมใช้ `payload.accuracy || ""` ซึ่งถ้า accuracy ที่ส่งมาเป็น 0
   // (ค่าความแม่นยำที่ถูกต้อง ไม่ใช่ค่าไม่มี) จะถูกมองเป็น falsy แล้วเขียนเป็นค่าว่างแทน
@@ -1235,12 +1314,19 @@ function saveLog(payload) {
   });
 
   sheet.appendRow(rowData);
-  return {
+  const result = {
     ok: true,
     message: "บันทึกข้อมูลสำเร็จ",
     userId: resolvedUserId,
     displayName: resolvedDisplayName,
   };
+
+  // เก็บผลลัพธ์ไว้ผูกกับ checkinRequestId (ถ้า Client ส่งมา) ให้ request ที่ "ลองใหม่" ด้วย
+  // ข้อมูลชุดเดียวกัน (checkinRequestId เดิม) ได้รับผลลัพธ์นี้กลับไปทันที แทนที่จะเขียนซ้ำอีกแถว
+  const requestId = String(payload.checkinRequestId || "").trim();
+  if (requestId) cacheCheckinResult(requestId, result);
+
+  return result;
 }
 
 /**
@@ -1274,8 +1360,12 @@ function ensureTestSheetSchema() {
  */
 function saveTestLog(payload) {
   const sheet = ensureTestSheetSchema();
-  const data = sheet.getDataRange().getValues();
-  const headers = data[0];
+  // ⚠️ BUGFIX: เหมือน saveLog() — อ่านเฉพาะแถวหัวคอลัมน์ ไม่อ่านทั้งชีต (ฟังก์ชันนี้ถูกเรียก
+  // ซ้ำถึง 10 ครั้งต่อการเช็คอินทดสอบ 1 ครั้ง ยิ่งขยายผลกระทบของการอ่านทั้งชีตทุกครั้งมากขึ้นไปอีก
+  // และเพราะทุก action ใน doPost ใช้ script lock ร่วมกัน ถ้าจุดนี้ช้าจะไปถ่วงคิวเช็คอินจริงของคนอื่นด้วย)
+  const headers = sheet
+    .getRange(1, 1, 1, sheet.getLastColumn())
+    .getValues()[0];
 
   const resolvedUserId = String(payload.userId || "").trim();
   // ดึงชื่อผู้ใช้จาก LINE User Sheet ถ้ามี

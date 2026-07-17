@@ -3,7 +3,7 @@
   const PENDING_KEY = "pending_checkin_payload";
   const LAST_CHECKIN_KEY = "last_checkin";
   const AREA_CACHE_KEY = "checkin_area_cache";
-  const API_URL = "https://script.google.com/macros/s/AKfycbxi64mybj1BOUHx_IqZri9toPYRc1FOyaNNFURWLQ0rZ-oUybKkJGp1zq2cEUXLDAQ7/exec";
+  const API_URL = "https://script.google.com/macros/s/AKfycbyArqRdRbW-h1PpR7vPfOMw76PQeF6hgNrZhEasqiv-zl-SlwbbK2UdBaj_PfHARAKp/exec";
   const LIFF_ID = "2008594376-aBuTJTic";
 
   const DEFAULT_AREA = {
