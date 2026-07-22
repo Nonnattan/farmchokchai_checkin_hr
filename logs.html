@@ -48,6 +48,73 @@
         font-size: 14px;
         outline: none;
       }
+      .field-cell {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 32px;
+      }
+      .field-cell .field-value {
+        font-weight: 700;
+        color: #172033;
+      }
+      .field-cell .field-value.empty {
+        font-weight: 400;
+        color: #999;
+      }
+      .field-edit-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        width: 100%;
+        min-width: 190px;
+      }
+      .field-edit-input {
+        flex: 1;
+        min-width: 100px;
+        border: 1px solid #dbe3ef;
+        border-radius: 8px;
+        padding: 7px 10px;
+        font-size: 13px;
+        outline: none;
+      }
+      .field-edit-input:focus {
+        border-color: #2563eb;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+      }
+      .icon-btn {
+        flex: 0 0 auto;
+        width: 30px;
+        height: 30px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 8px;
+        border: 1px solid #dbe3ef;
+        background: #f8fafc;
+        color: #475569;
+        cursor: pointer;
+        font-size: 14px;
+        line-height: 1;
+        transition: all 0.2s ease;
+      }
+      .icon-btn:hover:not(:disabled) {
+        background: #eef4ff;
+        border-color: #2563eb;
+        color: #2563eb;
+      }
+      .icon-btn.primary {
+        background: #2563eb;
+        border-color: #2563eb;
+        color: #fff;
+      }
+      .icon-btn.primary:hover:not(:disabled) {
+        background: #1d4ed8;
+      }
+      .icon-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
       .btn-small {
         padding: 6px 12px;
         border-radius: 6px;

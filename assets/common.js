@@ -3,8 +3,12 @@
   const PENDING_KEY = "pending_checkin_payload";
   const LAST_CHECKIN_KEY = "last_checkin";
   const AREA_CACHE_KEY = "checkin_area_cache";
-  const API_URL = "https://script.google.com/macros/s/AKfycbyArqRdRbW-h1PpR7vPfOMw76PQeF6hgNrZhEasqiv-zl-SlwbbK2UdBaj_PfHARAKp/exec";
-  const LIFF_ID = "2008594376-aBuTJTic";
+  // const API_URL = "https://script.google.com/macros/s/AKfycbyArqRdRbW-h1PpR7vPfOMw76PQeF6hgNrZhEasqiv-zl-SlwbbK2UdBaj_PfHARAKp/exec";
+  // const LIFF_ID = "2008594376-aBuTJTic";
+
+  //test
+  const API_URL = "https://script.google.com/macros/s/AKfycbxAI3K0IFpzps6yJw2h9ZPuvkaRWoPHvW-NJKob92jt7KIolLKLEfETTVoCdNk8Y3cf/exec";
+  const LIFF_ID = "2008594376-MrQ7IGVX";
 
   const DEFAULT_AREA = {
     areaId: "",
@@ -399,6 +403,11 @@
     return await requestJson("saveLogName", entry || {}, "POST", timeoutMs);
   }
 
+  // บันทึก Employee ID ที่ admin ใส่ให้กับคนเช็คอิน (ใช้สำหรับ Export TigerSoft) — คู่กับ saveLogName
+  async function saveLogEmployeeId(entry, timeoutMs = 15000) {
+    return await requestJson("saveLogEmployeeId", entry || {}, "POST", timeoutMs);
+  }
+
   async function getLogs(options = 200, timeoutMs = 15000) {
     const payload = {};
     if (typeof options === "number" || typeof options === "string") {
@@ -514,6 +523,109 @@
 
   function formatBangkokNow() {
     return formatDate(new Date());
+  }
+
+  // เหมือน formatDate() แต่คืนรูปแบบ "yyyy-MM-dd HH:mm:ss" (คั่นวันที่ด้วย "-" แทน "/")
+  // ใช้สำหรับไฟล์ Export ที่ต้องการรูปแบบวันเวลาแบบมาตรฐาน เช่น Export TigerSoft (.dat)
+  function formatDateTimeDash(value) {
+    const date = parseBangkokDateTime(value);
+    if (!date) return "";
+    const options = {
+      timeZone: "Asia/Bangkok",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    };
+    const parts = new Intl.DateTimeFormat("en-GB", options).formatToParts(date);
+    const get = (type) => parts.find((p) => p.type === type)?.value || "";
+    return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second") || "00"}`;
+  }
+
+  // ============================================
+  // สถานะ "ครึ่งแรก / ครึ่งหลัง" ของวัน (ใช้ร่วมกันระหว่างหน้า Logs และ Export Excel)
+  // ============================================
+  // Logic (ตามที่ระบุ):
+  // - ใช้เวลา Check-in ครั้งแรกของ "แต่ละคน" ในแต่ละวัน (Asia/Bangkok) เป็นเวลาอ้างอิง
+  // - ถ้า Check-in ครั้งถัดไปอยู่ภายใน 2 ชั่วโมงนับจากเวลาอ้างอิง -> "ครึ่งแรก"
+  // - ถ้าเกิน 2 ชั่วโมงนับจากเวลาอ้างอิง -> "ครึ่งหลัง"
+  // หมายเหตุ: เป็นฟังก์ชันคำนวณเพื่อ "แสดงผล" เท่านั้น (pure function, ไม่แก้ไข/บันทึกข้อมูลเดิม)
+  // ไม่กระทบ business logic การเช็คอิน การตรวจ geofence หรือการบันทึกลง Sheet ใดๆ ทั้งสิ้น
+  // รองรับข้อมูลย้อนหลังได้ เพราะคำนวณจาก createdAt ของแต่ละแถวโดยตรง ไม่ผูกกับเวลาปัจจุบัน
+  const HALF_DAY_FIRST = "ครึ่งแรก";
+  const HALF_DAY_SECOND = "ครึ่งหลัง";
+  const HALF_DAY_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 ชั่วโมง
+
+  function bangkokDateKeyFromDate(date) {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Bangkok",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date);
+    const get = (type) => parts.find((p) => p.type === type)?.value || "";
+    return `${get("year")}-${get("month")}-${get("day")}`;
+  }
+
+  // จัดกลุ่ม log ต่อ "คนเดียวกัน" ในแต่ละวัน — ใช้ userId ก่อน (แม่นยำสุด)
+  // ถ้าไม่มีให้ fallback ไป email แล้วค่อย displayName/name ตามลำดับ
+  // เพื่อให้ log เก่าที่ยังไม่มี userId ก็ยังจัดกลุ่มถูกคนได้ตามเท่าที่ข้อมูลมี
+  function halfDayGroupKey(log) {
+    const uid = String(log?.userId || "").trim();
+    const mail = String(log?.email || "").trim().toLowerCase();
+    const name = String(log?.displayName || log?.name || "").trim().toLowerCase();
+    const person = uid ? "uid:" + uid : mail ? "email:" + mail : (name ? "name:" + name : "anon");
+    const date = parseBangkokDateTime(log?.createdAt || log?.time);
+    const dateKey = date ? bangkokDateKeyFromDate(date) : "unknown";
+    return person + "|" + dateKey;
+  }
+
+  // คืนค่า Map<index ใน rows, "ครึ่งแรก"|"ครึ่งหลัง"|""> — ใช้ index ของ rows ที่ส่งเข้ามาเป็น key
+  function computeHalfDayStatusMap(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    const groups = new Map();
+
+    list.forEach((row, idx) => {
+      const key = halfDayGroupKey(row);
+      const time = parseBangkokDateTime(row?.createdAt || row?.time);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push({ idx, time });
+    });
+
+    const result = new Map();
+
+    groups.forEach((entries) => {
+      const withTime = entries.filter((e) => e.time instanceof Date);
+      if (!withTime.length) {
+        entries.forEach((e) => result.set(e.idx, ""));
+        return;
+      }
+      // เวลาอ้างอิง = Check-in ครั้งแรกสุด (เวลาน้อยที่สุด) ของคนนี้ในวันนี้
+      const refMs = withTime.reduce(
+        (min, e) => Math.min(min, e.time.getTime()),
+        withTime[0].time.getTime(),
+      );
+      entries.forEach((e) => {
+        if (!(e.time instanceof Date)) {
+          result.set(e.idx, "");
+          return;
+        }
+        const diff = e.time.getTime() - refMs;
+        result.set(e.idx, diff <= HALF_DAY_WINDOW_MS ? HALF_DAY_FIRST : HALF_DAY_SECOND);
+      });
+    });
+
+    return result;
+  }
+
+  // Helper สะดวกใช้: คืน array ใหม่ (ไม่แก้ของเดิม) โดยเพิ่ม field "halfDayStatus" ให้แต่ละแถว
+  function annotateHalfDayStatus(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    const map = computeHalfDayStatusMap(list);
+    return list.map((row, idx) => ({ ...row, halfDayStatus: map.get(idx) || "" }));
   }
 
   function getVisibleAreas(areas, role, uid, email) {
@@ -898,6 +1010,7 @@
     addLog,
     addTestLog,
     saveLogName,
+    saveLogEmployeeId,
     getLogs,
     getUsers,
     saveUser,
@@ -910,9 +1023,14 @@
     isInsideBoundary,
     calculateDistanceMeters,
     formatDate,
+    formatDateTimeDash,
     formatBangkokNow,
     formatNumber,
     parseBangkokDateTime,
+    HALF_DAY_FIRST,
+    HALF_DAY_SECOND,
+    computeHalfDayStatusMap,
+    annotateHalfDayStatus,
     getVisibleAreas,
     normalizeArea,
     normalizeAreaList,

@@ -11,6 +11,7 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
           const loading = ref(false);
           const loadingMore = ref(false);
           const exporting = ref(false);
+          const exportingTigerSoft = ref(false);
           const error = ref("");
           const activeTab = ref("today");
           const fromDate = ref(todayKey);
@@ -140,11 +141,16 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
             );
           });
 
+          // เพิ่ม field halfDayStatus (ครึ่งแรก/ครึ่งหลัง) ให้ log ที่โหลดมาแล้วทุกแถว
+          // คำนวณจากข้อมูลทั้งหมดที่โหลดไว้ (logs.value) ไม่ใช่ผลลัพธ์ที่ผ่านการกรองชื่อแล้ว
+          // เพื่อให้เวลาอ้างอิง "Check-in ครั้งแรกของวัน" ของแต่ละคนถูกต้องเสมอ ไม่ว่าจะกรองชื่ออยู่หรือไม่
+          const annotatedLogs = computed(() => common.annotateHalfDayStatus(logs.value));
+
           const filteredLogs = computed(() => {
             const q = nameFilter.value.trim().toLowerCase();
-            if (!q) return logs.value;
+            if (!q) return annotatedLogs.value;
 
-            return logs.value.filter((log) => {
+            return annotatedLogs.value.filter((log) => {
               const name = String(log.displayName || log.name || "")
                 .trim()
                 .toLowerCase();
@@ -348,6 +354,20 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
             });
           }
 
+          // ดึงข้อมูล log ดิบสำหรับ Export (ใช้ร่วมกันทั้ง Export Excel และ Export TigerSoft)
+          // ไม่ annotate / ไม่กรองชื่อในนี้ เพราะแต่ละ export อาจต้องการลำดับขั้นตอนต่างกัน
+          // (เช่น Export Excel ต้อง annotate ครึ่งแรก/ครึ่งหลัง จาก rows ทั้งหมดก่อนค่อยกรองชื่อทีหลัง)
+          async function fetchExportRows() {
+            const response = await common.getLogs({
+              ...currentFilterParams(),
+              limit: 10000,
+              offset: 0,
+              export: 1,
+              raw: true,
+            });
+            return Array.isArray(response?.data) ? response.data : [];
+          }
+
           async function exportExcel() {
             exporting.value = true;
             error.value = "";
@@ -357,24 +377,20 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
                 throw new Error("ไม่พบไลบรารี Excel — รีเฟรชหน้าแล้วลองใหม่");
               }
 
-              const response = await common.getLogs({
-                ...currentFilterParams(),
-                limit: 10000,
-                offset: 0,
-                export: 1,
-                raw: true,
-              });
+              const rawRows = await fetchExportRows();
+              // ใช้ logic เดียวกับหน้า Logs ในการคำนวณ ครึ่งแรก/ครึ่งหลัง (คำนวณจาก rawRows ทั้งหมดก่อนกรองชื่อ
+              // เพื่อให้เวลาอ้างอิง "Check-in ครั้งแรกของวัน" ของแต่ละคนถูกต้อง แล้วค่อยกรองชื่อทีหลัง)
+              const annotatedRows = common.annotateHalfDayStatus(rawRows);
+              const rows = filterExportRows(annotatedRows);
 
-              const rawRows = Array.isArray(response?.data) ? response.data : [];
-              const rows = filterExportRows(rawRows);
-
-              const header = ["ชื่อ", "อีเมล", "ละติจูด", "ลองจิจูด", "ระยะห่างจากจุดศูนย์กลาง (ม.)", "สถานที่", "วันเวลา"];
+              const header = ["ชื่อ", "อีเมล", "ละติจูด", "ลองจิจูด", "ระยะห่างจากจุดศูนย์กลาง (ม.)", "สถานะ", "สถานที่", "วันเวลา"];
               const body = rows.map((row) => [
                 String(row.displayName || row.name || ""),
                 String(row.email || ""),
                 row.lat ?? "",
                 row.lng ?? "",
                 row.distantcenter ?? "",
+                String(row.halfDayStatus || ""),
                 String(row.site || ""),
                 formatDisplayTime(row.createdAt || row.time || ""),
               ]);
@@ -386,6 +402,7 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
                 { wch: 14 },
                 { wch: 14 },
                 { wch: 20 },
+                { wch: 12 },
                 { wch: 28 },
                 { wch: 24 },
               ];
@@ -408,6 +425,87 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
                 err && err.message ? err.message : "Export ไม่สำเร็จ";
             } finally {
               exporting.value = false;
+            }
+          }
+
+          // แปลง rows ที่กรองแล้วให้เป็นบรรทัดข้อความของไฟล์ TigerSoft (.dat)
+          // รูปแบบ: EmployeeId \t วันเวลา(yyyy-MM-dd HH:mm:ss) \t 1 \t 0 \t 0 \t 0
+          // Column 3-6 (1 0 0 0) เป็นค่าคงที่ตามที่ระบุไว้ก่อน ยังไม่มี logic แปรผัน
+          function buildTigerSoftLines(rows) {
+            return rows.map((row) => {
+              const employeeId = String(row.employeeId || "").trim();
+              const dateTime = common.formatDateTimeDash(row.createdAt || row.time || "");
+              return [employeeId, dateTime, "1", "0", "0", "0"].join("\t");
+            });
+          }
+
+          function downloadTextFile(filename, content) {
+            const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+          }
+
+          // Export TigerSoft: แยก Function ออกจาก Export Excel ทั้งหมด แต่ Reuse การดึงข้อมูล/การกรองชื่อ
+          // ชุดเดียวกับ Export Excel (fetchExportRows + filterExportRows) ตามที่ระบุ — ไม่ Query ใหม่
+          async function exportTigerSoft() {
+            exportingTigerSoft.value = true;
+            error.value = "";
+
+            try {
+              const rawRows = await fetchExportRows();
+              const rows = filterExportRows(rawRows);
+
+              if (!rows.length) {
+                error.value = "ไม่พบข้อมูลที่ตรงกับตัวกรองสำหรับ Export TigerSoft";
+                return;
+              }
+
+              // ถ้าพบแม้แต่ 1 รายการที่ไม่มี Employee ID ให้หยุด export ทั้งหมด (ตามที่ระบุ)
+              // และแจ้งรายชื่อ/อีเมลที่ขาด Employee ID เพื่อให้ admin ไปกรอกให้ครบก่อน
+              const missingRows = rows.filter(
+                (row) => !String(row.employeeId || "").trim(),
+              );
+
+              if (missingRows.length) {
+                const labels = Array.from(
+                  new Set(
+                    missingRows.map((row) =>
+                      String(row.displayName || row.name || row.email || "(ไม่ทราบชื่อ)").trim(),
+                    ),
+                  ),
+                );
+                const preview = labels.slice(0, 5).join(", ");
+                const suffix = labels.length > 5 ? ` และอีก ${labels.length - 5} คน` : "";
+                error.value =
+                  `พบ ${missingRows.length} รายการที่ยังไม่มี Employee ID (${preview}${suffix}) ` +
+                  `กรุณากด "แก้ไข Employee ID" ให้ครบทุกคนก่อน Export TigerSoft`;
+                return;
+              }
+
+              const lines = buildTigerSoftLines(rows);
+              const content = lines.join("\n");
+
+              const stamp = new Date()
+                .toISOString()
+                .replace(/[:.]/g, "-")
+                .slice(0, 19);
+
+              downloadTextFile(
+                `checkin_logs_tigersoft_${activeTab.value}_${stamp}.dat`,
+                content,
+              );
+            } catch (err) {
+              console.error(err);
+              error.value =
+                err && err.message ? err.message : "Export TigerSoft ไม่สำเร็จ";
+            } finally {
+              exportingTigerSoft.value = false;
             }
           }
 
@@ -506,6 +604,63 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
             }
           }
 
+          // Employee ID edit — แยกออกจาก edit ชื่อ (editingLogId/editingName ด้านบน) แต่ใช้ pattern เดียวกัน
+          // เก็บไว้ใช้เตรียม Employee ID ให้ครบก่อน Export TigerSoft
+          const editingEmployeeIdLogId = ref(null);
+          const editingEmployeeId = ref("");
+          const savingEmployeeId = ref(false);
+
+          function startEditEmployeeId(log) {
+            editingEmployeeIdLogId.value = logRowKey(log);
+            editingEmployeeId.value = log.employeeId || "";
+          }
+
+          function cancelEditEmployeeId() {
+            editingEmployeeIdLogId.value = null;
+            editingEmployeeId.value = "";
+          }
+
+          async function saveEmployeeId(log) {
+            if (!editingEmployeeId.value.trim()) {
+              error.value = "กรุณาระบุ Employee ID ที่ต้องการ";
+              return;
+            }
+
+            if (!String(log.userId || "").trim()) {
+              error.value = "ไม่พบ userId ของ LINE ในรายการนี้ — ให้คนนี้เช็กอินใหม่อีกครั้งเพื่อบันทึก userId";
+              return;
+            }
+
+            savingEmployeeId.value = true;
+            error.value = "";
+
+            try {
+              const result = await common.saveLogEmployeeId({
+                userId: log.userId || "",
+                employeeId: editingEmployeeId.value.trim(),
+              }, 15000);
+
+              if (result && result.ok) {
+                const matchUserId = String(log.userId || "").trim();
+                logs.value.forEach((item) => {
+                  const itemUserId = String(item.userId || "").trim();
+                  if (matchUserId && itemUserId === matchUserId) {
+                    item.employeeId = editingEmployeeId.value.trim();
+                  }
+                });
+                editingEmployeeIdLogId.value = null;
+                editingEmployeeId.value = "";
+              } else {
+                error.value = (result && (result.err || result.message)) || "บันทึก Employee ID ไม่สำเร็จ";
+              }
+            } catch (err) {
+              console.error(err);
+              error.value = err && err.message ? err.message : "บันทึก Employee ID ไม่สำเร็จ";
+            } finally {
+              savingEmployeeId.value = false;
+            }
+          }
+
           return {
             activeTab,
             applyRangeSearch,
@@ -517,6 +672,14 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
             error,
             exportExcel,
             exporting,
+            exportTigerSoft,
+            exportingTigerSoft,
+            editingEmployeeIdLogId,
+            editingEmployeeId,
+            savingEmployeeId,
+            startEditEmployeeId,
+            cancelEditEmployeeId,
+            saveEmployeeId,
             fetchLogs,
             filteredLogs,
             filteredNameOptions,
@@ -581,6 +744,9 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
                   </button>
                   <button class="btn ghost" @click="exportExcel" :disabled="exporting">
                     {{ exporting ? 'กำลัง export...' : 'ดาวน์โหลด Excel' }}
+                  </button>
+                  <button class="btn ghost" @click="exportTigerSoft" :disabled="exportingTigerSoft">
+                    {{ exportingTigerSoft ? 'กำลัง export...' : 'Export TigerSoft' }}
                   </button>
                 </div>
               </div>
@@ -684,17 +850,28 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
                       <th>ชื่อ</th>
                       <th>LINE Email</th>
                       <th>พิกัด</th>
+                      <th>สถานที่</th>
                       <th>ระยะห่างจากจุดศูนย์กลาง</th>
                       <th>สถานะ</th>
-                      <th>Edit</th>
+                      <th>Employee ID</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr v-for="(log, idx) in filteredLogs" :key="logRowKey(log) || idx">
                       <td>{{ formatDisplayTime(log.createdAt || log.time) }}</td>
                       <td>
-                        <strong v-if="log.displayName">{{ log.displayName }}</strong>
-                        <strong v-else style="color:#999">-</strong>
+                        <div v-if="editingLogId === logRowKey(log)" class="field-edit-row">
+                          <input v-model="editingName" type="text" placeholder="กรุณาระบุชื่อ" class="field-edit-input" @keydown.enter="saveName(log)" @keydown.esc="cancelEditName" />
+                          <button @click="saveName(log)" :disabled="savingName" class="icon-btn primary" title="บันทึกชื่อ" aria-label="บันทึกชื่อ">
+                            {{ savingName ? '…' : '✓' }}
+                          </button>
+                          <button @click="cancelEditName" :disabled="savingName" class="icon-btn" title="ยกเลิก" aria-label="ยกเลิก">✕</button>
+                        </div>
+                        <div v-else class="field-cell">
+                          <strong v-if="log.displayName" class="field-value">{{ log.displayName }}</strong>
+                          <span v-else class="field-value empty">-</span>
+                          <button @click="startEditName(log)" class="icon-btn" title="แก้ไขชื่อ" aria-label="แก้ไขชื่อ">✎</button>
+                        </div>
                       </td>
                       <td>
                         <span v-if="log.name" class="email-text">{{ log.name }}</span>
@@ -706,27 +883,33 @@ const { createApp, computed, nextTick, onBeforeUnmount, onMounted, ref } =
                         {{ common.formatNumber(log.lat) || '-' }}, {{ common.formatNumber(log.lng) || '-' }}
                       </td>
                       <td>
+                        <span v-if="log.site">{{ log.site }}</span>
+                        <span v-else style="color:#999">-</span>
+                      </td>
+                      <td>
                         <span v-if="log.distantcenter !== undefined && log.distantcenter !== null && log.distantcenter !== ''">
                           {{ common.formatNumber(log.distantcenter, 1) }} ม.
                         </span>
                         <span v-else style="color:#999">-</span>
                       </td>
                       <td>
-                        <span class="pill success">{{ log.status || 'checked_in' }}</span>
+                        <span v-if="log.halfDayStatus === 'ครึ่งแรก'" class="pill success">{{ log.halfDayStatus }}</span>
+                        <span v-else-if="log.halfDayStatus === 'ครึ่งหลัง'" class="pill warning">{{ log.halfDayStatus }}</span>
+                        <span v-else class="pill">-</span>
                       </td>
                       <td>
-                        <div v-if="editingLogId === logRowKey(log)" class="edit-name-row">
-                          <input v-model="editingName" type="text" placeholder="กรุณาระบุชื่อ" class="edit-name-input" />
-                          <button @click="saveName(log)" :disabled="savingName" class="btn-small primary">
-                            {{ savingName ? 'กำลัง...' : 'บันทึก' }}
+                        <div v-if="editingEmployeeIdLogId === logRowKey(log)" class="field-edit-row">
+                          <input v-model="editingEmployeeId" type="text" placeholder="กรุณาระบุ Employee ID" class="field-edit-input" @keydown.enter="saveEmployeeId(log)" @keydown.esc="cancelEditEmployeeId" />
+                          <button @click="saveEmployeeId(log)" :disabled="savingEmployeeId" class="icon-btn primary" title="บันทึก Employee ID" aria-label="บันทึก Employee ID">
+                            {{ savingEmployeeId ? '…' : '✓' }}
                           </button>
-                          <button @click="cancelEditName" :disabled="savingName" class="btn-small ghost">
-                            ยกเลิก
-                          </button>
+                          <button @click="cancelEditEmployeeId" :disabled="savingEmployeeId" class="icon-btn" title="ยกเลิก" aria-label="ยกเลิก">✕</button>
                         </div>
-                        <button v-else @click="startEditName(log)" class="btn-small primary">
-                          แก้ไขชื่อ
-                        </button>
+                        <div v-else class="field-cell">
+                          <span v-if="log.employeeId" class="field-value">{{ log.employeeId }}</span>
+                          <span v-else class="field-value empty">-</span>
+                          <button @click="startEditEmployeeId(log)" class="icon-btn" title="แก้ไข Employee ID" aria-label="แก้ไข Employee ID">✎</button>
+                        </div>
                       </td>
                     </tr>
                   </tbody>

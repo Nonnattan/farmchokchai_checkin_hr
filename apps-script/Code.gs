@@ -18,6 +18,8 @@ const LOG_HEADERS = [
   "userId",
   "status",
   "distantcenter", // ระยะห่างจากจุดศูนย์กลางพื้นที่ (เมตร) — เพิ่มตามคำขอ เพื่อดูย้อนหลังว่าตอนเช็กอินอยู่ห่างจากจุดศูนย์กลางเท่าไร
+  "employeeId", // รหัสพนักงาน — เพิ่มตามคำขอสำหรับ Export TigerSoft (ค่า mirror มาจาก Sheet "user" ตอนเช็กอิน/enrich)
+  "halfDayStatus", // "ครึ่งแรก"/"ครึ่งหลัง" — เพิ่มตามคำขอ เพื่อให้เห็นค่านี้ตรงใน Google Sheet เหมือนหน้าเว็บ Logs
 ];
 
 // Schema สำหรับ Sheet "Test" — เหมือน Logs แต่เพิ่ม sampleIndex และ areaId เพื่อระบุว่าเป็นการอ่านครั้งที่เท่าไร
@@ -54,6 +56,20 @@ const LEGACY_LOG_HEADER_RENAME = {
  *   จะถูกเพิ่มเป็นคอลัมน์ใหม่ต่อท้าย โดยไม่ลบหรือแก้ข้อมูลแถวที่มีอยู่แล้วเลย
  * - ฟังก์ชันนี้ปลอดภัยที่จะเรียกซ้ำได้ทุกครั้ง (idempotent)
  */
+// บังคับคอลัมน์ createdAt ให้เป็น Plain Text (number format "@") เสมอ
+// ต้นเหตุจริงของบั๊กเวลาเพี้ยน +7 ชั่วโมง: Google Sheets auto-convert ข้อความเวลาไทยที่เขียนเข้าไป
+// (เช่น "2026/07/21 08:55:40") ให้กลายเป็นชนิด Date ให้เองถ้าคอลัมน์ไม่ได้ตั้ง format เป็น Plain Text
+// ไว้ก่อน แล้วพอ Apps Script อ่านค่า Date นั้นกลับมาต้อง format กลับเป็นข้อความอีกที ก็ต้องเดา/พึ่ง
+// timezone ที่อาจไม่ตรงกับตอนที่ Sheets ใช้ตีความตอน auto-convert ทำให้ตัวเลขเพี้ยนไป — วิธีตัดปัญหา
+// ทั้งหมดคือบังคับให้คอลัมน์นี้เป็น Plain Text ตั้งแต่ต้น ค่าที่เขียนเข้าไปจะเป็น "text ตัวเดิมเป๊ะๆ"
+// ตลอดไป ไม่มีการแปลงชนิดใดๆ เกิดขึ้นเลย ไม่ว่าจะตั้ง timezone ของสเปรดชีต/สคริปต์เป็นอะไรก็ตาม
+function forceCreatedAtPlainText_(sheet, headers) {
+  const createdAtColIndex = headers.indexOf("createdAt") + 1; // 1-based, 0 = ไม่เจอ
+  if (createdAtColIndex <= 0) return;
+  const numRows = Math.max(sheet.getMaxRows() - 1, 1);
+  sheet.getRange(2, createdAtColIndex, numRows, 1).setNumberFormat("@");
+}
+
 function ensureLogsSheetSchema() {
   const sheet = getSheetByNameOrCreate(LOGS_SHEET_NAME);
   const lastRow = sheet.getLastRow();
@@ -62,6 +78,7 @@ function ensureLogsSheetSchema() {
   if (lastRow === 0) {
     // ชีตยังไม่มีอะไรเลย สร้าง header ใหม่ตาม schema ปัจจุบัน
     sheet.appendRow(LOG_HEADERS);
+    forceCreatedAtPlainText_(sheet, LOG_HEADERS);
     return sheet;
   }
 
@@ -90,7 +107,10 @@ function ensureLogsSheetSchema() {
     sheet
       .getRange(1, headers.length + 1, 1, missing.length)
       .setValues([missing]);
+    headers = headers.concat(missing);
   }
+
+  forceCreatedAtPlainText_(sheet, headers);
 
   return sheet;
 }
@@ -142,6 +162,7 @@ const LINE_CHECKIN_USER_HEADERS = [
   "name",
   "currentName",
   "email",
+  "employeeId", // รหัสพนักงาน — เพิ่มตามคำขอสำหรับ Export TigerSoft, admin เป็นผู้กรอกให้ผ่านหน้า Logs
   "updatedAt",
 ];
 
@@ -279,6 +300,8 @@ function doPost(e) {
       result = saveTestLog(payload);
     } else if (action === "saveLogName") {
       result = handleSaveLogName(payload);
+    } else if (action === "saveLogEmployeeId") {
+      result = handleSaveLogEmployeeId(payload);
     } else {
       result = { ok: false, error: "ไม่พบ Action POST: " + action };
     }
@@ -331,7 +354,9 @@ const CHECKIN_CACHE_TTL_SEC = 21600;
 function getCachedCheckinResult(requestId) {
   if (!requestId) return null;
   try {
-    const raw = CacheService.getScriptCache().get(CHECKIN_CACHE_PREFIX + requestId);
+    const raw = CacheService.getScriptCache().get(
+      CHECKIN_CACHE_PREFIX + requestId,
+    );
     if (!raw) return null;
     return JSON.parse(raw);
   } catch (e) {
@@ -945,6 +970,47 @@ function updateLineCheckinUserCurrentName(userId, currentName, email) {
   return true;
 }
 
+/**
+ * บันทึก/อัปเดต Employee ID ให้กับคนเช็คอิน (Sheet "user") — คู่กับ updateLineCheckinUserCurrentName
+ * ใช้ userId (LINE userId) เป็นตัวจับคู่หลักเหมือนกัน เพราะ Employee ID เป็นข้อมูลที่ผูกกับ "คน" ไม่ใช่ "แถว Log"
+ */
+function updateLineCheckinUserEmployeeId(userId, employeeId) {
+  ensureLineCheckinUserSheet();
+
+  const uid = String(userId || "").trim();
+  const nextEmployeeId = String(employeeId || "").trim();
+  if (!uid || !nextEmployeeId) return false;
+
+  const sheet = getSheetByNameOrCreate(LINE_CHECKIN_USER_SHEET);
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0].map(function (h) {
+    return String(h || "").trim();
+  });
+  const now = new Date().toISOString();
+  let rowIndex = findLineCheckinUserRowIndex(sheet, uid);
+
+  if (rowIndex === -1) {
+    const rowData = headers.map(function (h) {
+      if (h === "userId") return uid;
+      if (h === "employeeId") return nextEmployeeId;
+      if (h === "updatedAt") return now;
+      return "";
+    });
+    sheet.appendRow(rowData);
+    return true;
+  }
+
+  const row = sheet.getRange(rowIndex, 1, 1, headers.length).getValues()[0];
+  const employeeIdCol = headers.indexOf("employeeId");
+  const updatedCol = headers.indexOf("updatedAt");
+
+  if (employeeIdCol > -1) row[employeeIdCol] = nextEmployeeId;
+  if (updatedCol > -1) row[updatedCol] = now;
+
+  sheet.getRange(rowIndex, 1, 1, headers.length).setValues([row]);
+  return true;
+}
+
 function resolveLogDisplayName(payload, lineUser) {
   const fromCurrent = lineUser && String(lineUser.currentName || "").trim();
   if (fromCurrent) return fromCurrent;
@@ -966,32 +1032,112 @@ function formatBangkokDateTime(date) {
   return Utilities.formatDate(d, BANGKOK_TZ, "yyyy/MM/dd HH:mm:ss");
 }
 
-function parseLogDate(value) {
-  if (value === null || value === undefined || value === "") return null;
-  if (value instanceof Date && !isNaN(value.getTime())) return value;
-
-  const text = String(value).trim();
-  if (!text) return null;
-
-  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(text) || text.indexOf("T") > -1) {
-    const isoDate = new Date(text);
-    if (!isNaN(isoDate.getTime())) return isoDate;
+// Cache timezone ของสเปรดชีตไว้ในตัวแปรระดับ execution เดียว (ต่อ 1 ครั้งที่ Apps Script รัน)
+// เพราะ rawCreatedAtText() ถูกเรียกซ้ำนับร้อย/พันครั้งต่อ 1 request (ครั้งละ 1 แถว) ถ้าเปิด
+// SpreadsheetApp.openById(...) ใหม่ทุกครั้งจะช้าและเสี่ยง error/quota โดยไม่จำเป็น — เปิดครั้งเดียวพอ
+let _cachedSheetTz = null;
+function getSpreadsheetTz_() {
+  if (_cachedSheetTz) return _cachedSheetTz;
+  try {
+    const tz = SpreadsheetApp.openById(SPREADSHEET_ID).getSpreadsheetTimeZone();
+    _cachedSheetTz = typeof tz === "string" && tz ? tz : BANGKOK_TZ;
+  } catch (e) {
+    // ถ้าอ่าน timezone ของสเปรดชีตไม่ได้ไม่ว่าเหตุผลใด ให้ fallback เป็น BANGKOK_TZ
+    // (ดีกว่าปล่อยให้ Utilities.formatDate พังทั้ง request)
+    _cachedSheetTz = BANGKOK_TZ;
   }
+  return _cachedSheetTz;
+}
+
+// อ่านค่า createdAt ออกมาเป็น "text ตัวเลขเดิมเป๊ะๆ" โดยไม่มีการแปลง timezone ใดๆ ทั้งสิ้น
+// เพราะเวลาที่เก็บไว้ในชีต (ไม่ว่าจะยังเป็น text หรือถูก Sheets auto-convert เป็นชนิด Date ให้เอง)
+// คือเวลาไทยที่ถูกต้องอยู่แล้วเสมอ — ถ้าเป็น Date object ก็แค่ "อ่านตัวเลขที่เห็น" กลับมาด้วย
+// timezone เดียวกับที่ "Google Sheet เอง" ใช้ตอนแปลง text -> Date ให้อัตโนมัติ (spreadsheet timezone
+// ที่ตั้งไว้ใน File > Settings ของสเปรดชีตนี้) ไม่ใช่ timezone ของตัวโปรเจกต์ Apps Script
+// (Session.getScriptTimeZone()) ซึ่งเป็นค่าคนละอันกัน และเป็นสาเหตุที่เวลาเพี้ยนไป 7 ชั่วโมง:
+// ถ้าสเปรดชีตตั้ง timezone ไว้คนละค่ากับตัวโปรเจกต์ Apps Script การ format กลับด้วย
+// Session.getScriptTimeZone() จะไม่ตรงกับ timezone ที่ Sheets ใช้ตีความ/แสดงผลค่าเดิมตั้งแต่แรก
+// ใช้ spreadsheet timezone เสมอจึงการันตีว่าได้ตัวเลขเดิมเป๊ะๆ ไม่มีการบวก/ลบชั่วโมงใดๆ แอบแฝงอยู่เลย
+function rawCreatedAtText(value) {
+  if (value === null || value === undefined || value === "") return "";
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return Utilities.formatDate(
+      value,
+      getSpreadsheetTz_(),
+      "yyyy/MM/dd HH:mm:ss",
+    );
+  }
+  return String(value).trim();
+}
+
+/**
+ * ===========================================================================
+ * เรียกฟังก์ชันนี้ "ครั้งเดียว" ตรงๆ จาก Apps Script editor (เลือกฟังก์ชันนี้แล้วกด Run)
+ * เพื่อซ่อมแถวเก่าที่คอลัมน์ createdAt ถูก Google Sheets auto-convert เป็นชนิด Date ไปแล้ว
+ * (ต้นเหตุของบั๊กเวลาเพี้ยน +7 ชั่วโมง) ให้กลายเป็นข้อความ (text) ที่ถูกต้องแบบถาวร
+ * - ต้อง deploy โค้ดเวอร์ชันล่าสุดนี้ก่อน (สร้าง New Deployment ไม่ใช่แค่ Save) การรันฟังก์ชันนี้
+ *   จาก editor ไม่จำเป็นต้อง deploy ก็รันได้ทันที แต่ Web App (หน้าเว็บ) ต้อง deploy ใหม่ด้วย
+ *   ไม่งั้นหน้าเว็บจะยังเรียกโค้ดเวอร์ชันเก่าอยู่ ทำให้ดูเหมือนแก้ไม่ได้ผลทั้งที่แก้ถูกจุดแล้ว
+ * - ปลอดภัยที่จะรันซ้ำได้เรื่อยๆ (idempotent) แถวที่เป็น text ถูกต้องอยู่แล้วจะไม่ถูกแตะต้อง
+ * - เพราะ ensureLogsSheetSchema() บังคับ format คอลัมน์นี้เป็น Plain Text ไว้แล้ว ค่าที่เขียนกลับ
+ *   ในนี้จะไม่ถูก Sheets แปลงเป็น Date อีกต่อไป (ปัญหานี้จะไม่เกิดซ้ำกับแถวใหม่ที่บันทึกหลังจากนี้)
+ * ===========================================================================
+ */
+function repairCorruptedCreatedAtDates() {
+  const sheet = ensureLogsSheetSchema();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { ok: true, repaired: 0 };
+
+  const headers = sheet
+    .getRange(1, 1, 1, sheet.getLastColumn())
+    .getValues()[0]
+    .map(function (h) {
+      return String(h || "").trim();
+    });
+  const createdAtCol = headers.indexOf("createdAt") + 1; // 1-based
+  if (createdAtCol <= 0) {
+    throw new Error("ไม่พบคอลัมน์ createdAt ใน Sheet Logs");
+  }
+
+  const numRows = lastRow - 1;
+  const range = sheet.getRange(2, createdAtCol, numRows, 1);
+  const values = range.getValues();
+
+  let repaired = 0;
+  const fixedValues = values.map(function (row) {
+    const cell = row[0];
+    if (cell instanceof Date && !isNaN(cell.getTime())) {
+      repaired++;
+      return [rawCreatedAtText(cell)];
+    }
+    return [cell];
+  });
+
+  if (repaired > 0) {
+    range.setValues(fixedValues);
+  }
+
+  return { ok: true, repaired: repaired, totalRows: numRows };
+}
+
+// ใช้สำหรับ "เทียบลำดับ/กรองช่วงวัน/คำนวณระยะห่าง" เท่านั้น — ไม่ใช้ค่านี้ไปแสดงผลโดยตรงเด็ดขาด
+// สร้าง Date จากตัวเลขในข้อความตรงๆ (ไม่ใส่ +07:00 หรือ timezone ใดๆ) เพื่อไม่ให้เกิดการแปลงเวลาซ้ำอีกชั้น
+// ใช้เทียบ/ลบกันเองระหว่าง Date ที่สร้างด้วยวิธีเดียวกันนี้เท่านั้น จึงปลอดภัยแม้ epoch จริงจะไม่ตรง UTC ก็ตาม
+function parseLogDate(value) {
+  const text = rawCreatedAtText(value);
+  if (!text) return null;
 
   const match = text.match(
     /^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/,
   );
   if (match) {
-    const y = match[1];
-    const m = String(match[2]).padStart(2, "0");
-    const d = String(match[3]).padStart(2, "0");
-    const hh = String(match[4] || 0).padStart(2, "0");
-    const mm = String(match[5] || 0).padStart(2, "0");
-    const ss = String(match[6] || 0).padStart(2, "0");
-    const bangkokIso =
-      y + "-" + m + "-" + d + "T" + hh + ":" + mm + ":" + ss + "+07:00";
-    const parsed = new Date(bangkokIso);
-    if (!isNaN(parsed.getTime())) return parsed;
+    const y = Number(match[1]);
+    const m = Number(match[2]);
+    const d = Number(match[3]);
+    const hh = Number(match[4] || 0);
+    const mm = Number(match[5] || 0);
+    const ss = Number(match[6] || 0);
+    return new Date(y, m - 1, d, hh, mm, ss);
   }
 
   const fallback = new Date(text);
@@ -1009,6 +1155,8 @@ function buildLineCheckinUserMap() {
   return byUserId;
 }
 
+// หมายเหตุ: ฟังก์ชันนี้เป็นจุด enrich ข้อมูล log ร่วมกัน (ใช้ทั้งหน้า Logs, Export Excel, Export TigerSoft
+// เพราะทั้งหมดเรียกผ่าน handleGetLogs()) — เพิ่ม employeeId เข้ามาโดยไม่กระทบ field เดิมที่มีอยู่แล้ว
 function enrichLogsWithUserNames(logs) {
   const byUserId = buildLineCheckinUserMap();
   return (logs || []).map(function (log) {
@@ -1016,9 +1164,123 @@ function enrichLogsWithUserNames(logs) {
     if (uid && byUserId[uid]) {
       const resolved = resolveLogDisplayName(log, byUserId[uid]);
       if (resolved) log.displayName = resolved;
+
+      // Employee ID: ใช้ค่าจาก Sheet "user" เสมอถ้ามี (เป็น source of truth ที่ admin กรอกไว้)
+      // เพื่อให้แก้ไข Employee ID ทีเดียวที่ Sheet "user" แล้วสะท้อนไปทุกแถว Log ของคนนั้นอัตโนมัติ
+      const empId = String(byUserId[uid].employeeId || "").trim();
+      if (empId) log.employeeId = empId;
     }
     return log;
   });
+}
+
+/**
+ * =======================================================================
+ * HALF-DAY STATUS (ครึ่งแรก / ครึ่งหลัง) — sync ลง Google Sheet
+ * =======================================================================
+ * เหตุผลที่ไม่คำนวณสดตอน saveLog() ทุกครั้งที่มีคนเช็คอิน:
+ * ต้องดูประวัติเช็คอินทั้งหมดของคนนั้นในวันนั้นเพื่อหา "ครั้งแรกของวัน" เป็นเวลาอ้างอิง
+ * ซึ่งหมายถึงต้องอ่านทั้งชีต Logs ทุกครั้ง — ตรงกับปัญหา timeout ที่เคยแก้ไปแล้วใน saveLog()
+ * (ดูคอมเมนต์ BUGFIX เรื่อง getDataRange() ด้านบน) จึงแยกออกมาเป็น batch job ที่รันแยกต่างหาก
+ * (เรียกเองจาก Apps Script editor ได้ทันที หรือจะตั้ง Trigger แบบ time-driven ให้รันอัตโนมัติ
+ * ทุกๆ 15-30 นาที ก็ได้ — ดูวิธีตั้งใน docs/ หรือ Apps Script > Triggers)
+ * ใช้ logic เดียวกับ common.js (annotateHalfDayStatus) เป๊ะๆ เพื่อให้ค่าที่เห็นในชีตตรงกับหน้าเว็บ Logs เสมอ
+ */
+const HALF_DAY_FIRST_LABEL = "ครึ่งแรก";
+const HALF_DAY_SECOND_LABEL = "ครึ่งหลัง";
+const HALF_DAY_WINDOW_MS_SERVER = 2 * 60 * 60 * 1000; // 2 ชั่วโมง — ต้องตรงกับ HALF_DAY_WINDOW_MS ใน common.js
+
+function bangkokDateKeyServer_(date) {
+  // date มาจาก parseLogDate() ซึ่งสร้างจากตัวเลขในข้อความตรงๆ ไม่มี timezone offset ใดๆ แอบแฝง
+  // จึงอ่านปี/เดือน/วันออกมาตรงๆ ได้เลย ห้ามใช้ Utilities.formatDate(...,"Asia/Bangkok") ตรงนี้เด็ดขาด
+  // เพราะจะเป็นการแปลง timezone ซ้ำอีกชั้นทั้งที่ตัวเลขถูกต้องอยู่แล้ว
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return y + "-" + m + "-" + d;
+}
+
+function halfDayGroupKeyServer_(row) {
+  const uid = String(row.userId || "").trim();
+  const mail = String(row.email || "")
+    .trim()
+    .toLowerCase();
+  const name = String(row.displayName || row.name || "")
+    .trim()
+    .toLowerCase();
+  const person = uid
+    ? "uid:" + uid
+    : mail
+      ? "email:" + mail
+      : name
+        ? "name:" + name
+        : "anon";
+  const date = parseLogDate(row.createdAt);
+  const dateKey = date ? bangkokDateKeyServer_(date) : "unknown";
+  return person + "|" + dateKey;
+}
+
+/**
+ * คำนวณ "ครึ่งแรก/ครึ่งหลัง" ให้ทุกแถวใน Sheet Logs แล้วเขียนกลับลงคอลัมน์ halfDayStatus ทีเดียว (batch)
+ * เรียกฟังก์ชันนี้ตรงๆ จาก Apps Script editor เพื่อ backfill ข้อมูลเก่าทั้งหมดในครั้งแรก
+ * และเรียกซ้ำได้เรื่อยๆ อย่างปลอดภัย (idempotent) — ใช้ตั้งเป็น time-driven trigger เพื่ออัปเดตอัตโนมัติได้เลย
+ */
+function syncHalfDayStatusColumn() {
+  const sheet = ensureLogsSheetSchema();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { ok: true, updated: 0 };
+
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const createdAtCol = headers.indexOf("createdAt");
+  const statusCol = headers.indexOf("halfDayStatus");
+  if (createdAtCol === -1 || statusCol === -1) {
+    throw new Error("ไม่พบคอลัมน์ createdAt หรือ halfDayStatus ใน Sheet Logs");
+  }
+
+  const numRows = lastRow - 1;
+  const values = sheet.getRange(2, 1, numRows, headers.length).getValues();
+
+  const rows = values.map(function (rowArr) {
+    const obj = {};
+    headers.forEach(function (h, i) {
+      obj[h] = rowArr[i];
+    });
+    return obj;
+  });
+
+  // จัดกลุ่มตามคน+วัน แล้วหาเวลาอ้างอิง (เช็คอินครั้งแรกสุดของวันนั้น) เหมือน common.js
+  const groups = {};
+  rows.forEach(function (row, idx) {
+    const key = halfDayGroupKeyServer_(row);
+    const time = parseLogDate(row.createdAt);
+    if (!groups[key]) groups[key] = [];
+    groups[key].push({ idx: idx, time: time });
+  });
+
+  const statusByIdx = new Array(rows.length).fill("");
+  Object.keys(groups).forEach(function (key) {
+    const entries = groups[key].filter(function (e) {
+      return e.time instanceof Date;
+    });
+    if (!entries.length) return;
+    const refMs = entries.reduce(function (min, e) {
+      return Math.min(min, e.time.getTime());
+    }, entries[0].time.getTime());
+    entries.forEach(function (e) {
+      const diff = e.time.getTime() - refMs;
+      statusByIdx[e.idx] =
+        diff <= HALF_DAY_WINDOW_MS_SERVER
+          ? HALF_DAY_FIRST_LABEL
+          : HALF_DAY_SECOND_LABEL;
+    });
+  });
+
+  const statusColumnValues = statusByIdx.map(function (s) {
+    return [s];
+  });
+  sheet.getRange(2, statusCol + 1, numRows, 1).setValues(statusColumnValues);
+
+  return { ok: true, updated: numRows };
 }
 
 /**
@@ -1054,16 +1316,12 @@ function handleGetLogs(params) {
     );
   }
 
-  // กรองตามช่วงวันที่ (ตีความ from/to เป็นวันที่ตามเขตเวลา Asia/Bangkok ไม่ใช่ UTC
-  // เพราะ frontend ส่งวันที่แบบ Bangkok-local มา เช่น "วันนี้" ตาม timezone ไทย
-  // Bangkok = UTC+7 ดังนั้นเที่ยงคืนของวันที่ Bangkok = เวลา -07:00 ของวันเดียวกันใน UTC)
+  // กรองตามช่วงวันที่ (from/to เป็นวันที่ปฏิทินแบบไทยอยู่แล้ว เช่น "2026-07-21" จาก frontend)
+  // เทียบแบบตัวเลขตรงๆ ไม่ใส่ offset ใดๆ เพิ่ม เพื่อให้เป็นฐานเดียวกับ parseLogDate() ด้านบน
+  // (ถ้าใส่ +07:00 ตรงนี้ทั้งที่ parseLogDate ไม่ใส่ จะเทียบกันคนละฐาน ผลกรอง/เรียงลำดับจะเพี้ยน)
   if (params.from || params.to) {
-    const fromDate = params.from
-      ? new Date(params.from + "T00:00:00.000+07:00")
-      : null;
-    const toDate = params.to
-      ? new Date(params.to + "T23:59:59.999+07:00")
-      : null;
+    const fromDate = params.from ? new Date(params.from + "T00:00:00") : null;
+    const toDate = params.to ? new Date(params.to + "T23:59:59.999") : null;
 
     data = data.filter(function (log) {
       const logDate = parseLogDate(log.createdAt);
@@ -1079,6 +1337,15 @@ function handleGetLogs(params) {
     const timeA = (parseLogDate(a.createdAt) || new Date(0)).getTime();
     const timeB = (parseLogDate(b.createdAt) || new Date(0)).getTime();
     return timeB - timeA;
+  });
+
+  // ส่ง createdAt กลับไปเป็น "text ตัวเลขเดิมเป๊ะๆ" ไม่มีการแปลง timezone ใดๆ ทั้งสิ้น (ดู rawCreatedAtText ด้านบน)
+  // กันไว้เฉพาะกรณีเซลล์ถูก Sheets auto-convert เป็นชนิด Date object ที่ JSON.stringify จะเรียก toISOString()
+  // ให้เองถ้าปล่อยผ่านไปตรงๆ — ใช้ rawCreatedAtText อ่านตัวเลขเดิมกลับมาเป็น text ตรงๆ ไม่มีคำนวณใดๆ แทรกเลย
+  data = data.map(function (log) {
+    const text = rawCreatedAtText(log.createdAt);
+    if (text) log.createdAt = text;
+    return log;
   });
 
   // สำหรับ Export ไม่ต้องแบ่งหน้า
@@ -1273,9 +1540,7 @@ function saveLog(payload) {
   // (ขณะที่ยังถือ script lock ค้างอยู่ด้วย) ก็จะยิ่งช้าลงเรื่อยๆ จนวันหนึ่งช้าเกินเวลาที่ Client
   // รอไหว (30 วิ) → Client ตัดใจ timeout ทั้งที่ Apps Script ยังทำงานต่อจนเขียนสำเร็จอยู่ดี
   // (Client abort ไม่ได้สั่งให้ execution ฝั่ง Server หยุดจริง) แก้โดยอ่านเฉพาะแถวหัวคอลัมน์แถวเดียว
-  const headers = sheet
-    .getRange(1, 1, 1, sheet.getLastColumn())
-    .getValues()[0];
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
 
   // BUGFIX (ไม่บันทึกค่า accuracy): เดิมใช้ `payload.accuracy || ""` ซึ่งถ้า accuracy ที่ส่งมาเป็น 0
   // (ค่าความแม่นยำที่ถูกต้อง ไม่ใช่ค่าไม่มี) จะถูกมองเป็น falsy แล้วเขียนเป็นค่าว่างแทน
@@ -1310,6 +1575,9 @@ function saveLog(payload) {
         !isNaN(validation.distanceFromCenter)
         ? Math.round(validation.distanceFromCenter * 10) / 10
         : "";
+    // Employee ID: ประทับค่าไว้ที่แถว Log ตอนเช็กอิน ถ้า Sheet "user" มีข้อมูลอยู่แล้ว (admin เคยกรอกไว้ก่อนหน้า)
+    // ถ้ายังไม่มี จะปล่อยว่างไว้ก่อน แล้ว enrichLogsWithUserNames() จะเติมให้ทีหลังตอนอ่านข้อมูล (ถ้า admin มากรอกเพิ่มภายหลัง)
+    if (h === "employeeId") return (lineUser && lineUser.employeeId) || "";
     return "";
   });
 
@@ -1343,12 +1611,18 @@ function ensureTestSheetSchema() {
 
   const lastCol = sheet.getLastColumn();
   const headerRange = sheet.getRange(1, 1, 1, Math.max(lastCol, 1));
-  const headers = headerRange.getValues()[0].map(function(h) { return String(h || "").trim(); });
+  const headers = headerRange.getValues()[0].map(function (h) {
+    return String(h || "").trim();
+  });
   const existing = new Set(headers.filter(Boolean));
-  const missing = TEST_LOG_HEADERS.filter(function(h) { return !existing.has(h); });
+  const missing = TEST_LOG_HEADERS.filter(function (h) {
+    return !existing.has(h);
+  });
 
   if (missing.length > 0) {
-    sheet.getRange(1, headers.length + 1, 1, missing.length).setValues([missing]);
+    sheet
+      .getRange(1, headers.length + 1, 1, missing.length)
+      .setValues([missing]);
   }
 
   return sheet;
@@ -1363,32 +1637,32 @@ function saveTestLog(payload) {
   // ⚠️ BUGFIX: เหมือน saveLog() — อ่านเฉพาะแถวหัวคอลัมน์ ไม่อ่านทั้งชีต (ฟังก์ชันนี้ถูกเรียก
   // ซ้ำถึง 10 ครั้งต่อการเช็คอินทดสอบ 1 ครั้ง ยิ่งขยายผลกระทบของการอ่านทั้งชีตทุกครั้งมากขึ้นไปอีก
   // และเพราะทุก action ใน doPost ใช้ script lock ร่วมกัน ถ้าจุดนี้ช้าจะไปถ่วงคิวเช็คอินจริงของคนอื่นด้วย)
-  const headers = sheet
-    .getRange(1, 1, 1, sheet.getLastColumn())
-    .getValues()[0];
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
 
   const resolvedUserId = String(payload.userId || "").trim();
   // ดึงชื่อผู้ใช้จาก LINE User Sheet ถ้ามี
-  const lineUser = resolvedUserId ? getLineCheckinUserByUserId(resolvedUserId) : null;
+  const lineUser = resolvedUserId
+    ? getLineCheckinUserByUserId(resolvedUserId)
+    : null;
   const resolvedDisplayName = resolveLogDisplayName(payload, lineUser);
   const createdAtBangkok = formatBangkokDateTime(
-    payload.time ? parseLogDate(payload.time) || new Date() : new Date()
+    payload.time ? parseLogDate(payload.time) || new Date() : new Date(),
   );
   const safeAccuracy = numOr(payload.accuracy, "");
 
   console.log(
     "[saveTestLog] debug: " +
-    JSON.stringify({
-      sampleIndex: payload.sampleIndex,
-      areaId: payload.areaId,
-      lat: payload.lat,
-      lng: payload.lng,
-      accuracy: safeAccuracy,
-      isInsideBoundary: payload.isInsideBoundary,
-    })
+      JSON.stringify({
+        sampleIndex: payload.sampleIndex,
+        areaId: payload.areaId,
+        lat: payload.lat,
+        lng: payload.lng,
+        accuracy: safeAccuracy,
+        isInsideBoundary: payload.isInsideBoundary,
+      }),
   );
 
-  const rowData = headers.map(function(h) {
+  const rowData = headers.map(function (h) {
     if (h === "createdAt") return createdAtBangkok;
     if (h === "displayName") return resolvedDisplayName;
     if (h === "email") return payload.email || "";
@@ -1496,5 +1770,64 @@ function handleSaveLogName(payload) {
     updatedCount: updatedCount,
     userId: targetUserId,
     displayName: newDisplayName,
+  };
+}
+
+/**
+ * บันทึก Employee ID ที่ admin ใส่ให้กับคนเช็คอิน — ใช้สำหรับ Export TigerSoft โดยเฉพาะ
+ * (ระบบเช็คอินผ่าน LINE ไม่มี Employee ID มาด้วยเอง ต้องให้ admin กรอกเองที่หน้า Logs)
+ * ตัวจับคู่หลักคือ LINE userId เท่านั้น (Employee ID ผูกกับ "คน" ไม่ใช่ผูกกับ email ที่อาจเปลี่ยนได้)
+ *
+ * เมื่อบันทึกสำเร็จ Employee ID จะถูกใส่ให้กับ "ทุกแถว Log ของคนนั้น" (ไม่ใช่แค่แถวเดียว)
+ * เหมือนกับ handleSaveLogName() — เพื่อให้ export ย้อนหลังได้ครบทุกแถว ไม่ใช่แค่แถวที่กดแก้ไข
+ */
+function handleSaveLogEmployeeId(payload) {
+  const sheet = ensureLogsSheetSchema();
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+
+  const userIdColIdx = headers.indexOf("userId");
+  const employeeIdColIdx = headers.indexOf("employeeId");
+
+  if (userIdColIdx === -1) {
+    return { ok: false, err: "ไม่พบ userId ใน Logs Sheet" };
+  }
+  if (employeeIdColIdx === -1) {
+    return { ok: false, err: "ไม่พบ employeeId ใน Logs Sheet" };
+  }
+
+  const targetUserId = String(payload.userId || "").trim();
+  const newEmployeeId = String(payload.employeeId || "").trim();
+
+  if (!targetUserId) {
+    return {
+      ok: false,
+      err: "ไม่พบ userId ของรายการที่ต้องการตั้ง Employee ID — ให้คนนี้เช็กอินใหม่อีกครั้งเพื่อบันทึก userId",
+    };
+  }
+  if (!newEmployeeId) {
+    return { ok: false, err: "กรุณาระบุ Employee ID ที่ต้องการบันทึก" };
+  }
+
+  updateLineCheckinUserEmployeeId(targetUserId, newEmployeeId);
+
+  let updatedCount = 0;
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const rowUserId = String(row[userIdColIdx] || "").trim();
+
+    if (rowUserId === targetUserId) {
+      row[employeeIdColIdx] = newEmployeeId;
+      sheet.getRange(i + 1, 1, 1, headers.length).setValues([row]);
+      updatedCount++;
+    }
+  }
+
+  return {
+    ok: true,
+    message: "อัปเดต Employee ID " + updatedCount + " รายการสำเร็จ",
+    updatedCount: updatedCount,
+    userId: targetUserId,
+    employeeId: newEmployeeId,
   };
 }
