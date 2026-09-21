@@ -1,4 +1,4 @@
-const SPREADSHEET_ID = "1CqGpZZP9jofU5EcKC2G3J60tiO2cSw7flTn4ZAJH4X0";
+const SPREADSHEET_ID = "1lhg43wqkZWd1I_q34SqfuI530MA3-rY8qpNSm6xYWcY";
 const LOGS_SHEET_NAME = "Logs";
 const TEST_SHEET_NAME = "Test";
 const AREAS_SHEET_NAME = "location"; // legacy sheet name kept for compatibility
@@ -19,7 +19,8 @@ const LOG_HEADERS = [
   "status",
   "distantcenter", // ระยะห่างจากจุดศูนย์กลางพื้นที่ (เมตร) — เพิ่มตามคำขอ เพื่อดูย้อนหลังว่าตอนเช็กอินอยู่ห่างจากจุดศูนย์กลางเท่าไร
   "employeeId", // รหัสพนักงาน — เพิ่มตามคำขอสำหรับ Export TigerSoft (ค่า mirror มาจาก Sheet "user" ตอนเช็กอิน/enrich)
-  "halfDayStatus", // "ครึ่งแรก"/"ครึ่งหลัง" — เพิ่มตามคำขอ เพื่อให้เห็นค่านี้ตรงใน Google Sheet เหมือนหน้าเว็บ Logs
+  "halfDayStatus", // "ครึ่งแรก"/"ครึ่งหลัง" — Frontend คำนวณมาแล้วตอน Check-in ส่งมาพร้อม payload
+  // Sheet นี้แค่เก็บค่าตรงๆ ไม่คำนวณเอง (ดูคอมเมนต์ "HALF-DAY STATUS" ด้านล่างในไฟล์นี้)
 ];
 
 // Schema สำหรับ Sheet "Test" — เหมือน Logs แต่เพิ่ม sampleIndex และ areaId เพื่อระบุว่าเป็นการอ่านครั้งที่เท่าไร
@@ -1176,111 +1177,108 @@ function enrichLogsWithUserNames(logs) {
 
 /**
  * =======================================================================
- * HALF-DAY STATUS (ครึ่งแรก / ครึ่งหลัง) — sync ลง Google Sheet
+ * HALF-DAY STATUS (ครึ่งแรก / ครึ่งหลัง)
  * =======================================================================
- * เหตุผลที่ไม่คำนวณสดตอน saveLog() ทุกครั้งที่มีคนเช็คอิน:
- * ต้องดูประวัติเช็คอินทั้งหมดของคนนั้นในวันนั้นเพื่อหา "ครั้งแรกของวัน" เป็นเวลาอ้างอิง
- * ซึ่งหมายถึงต้องอ่านทั้งชีต Logs ทุกครั้ง — ตรงกับปัญหา timeout ที่เคยแก้ไปแล้วใน saveLog()
- * (ดูคอมเมนต์ BUGFIX เรื่อง getDataRange() ด้านบน) จึงแยกออกมาเป็น batch job ที่รันแยกต่างหาก
- * (เรียกเองจาก Apps Script editor ได้ทันที หรือจะตั้ง Trigger แบบ time-driven ให้รันอัตโนมัติ
- * ทุกๆ 15-30 นาที ก็ได้ — ดูวิธีตั้งใน docs/ หรือ Apps Script > Triggers)
- * ใช้ logic เดียวกับ common.js (annotateHalfDayStatus) เป๊ะๆ เพื่อให้ค่าที่เห็นในชีตตรงกับหน้าเว็บ Logs เสมอ
+ * เปลี่ยนสถาปัตยกรรมแล้ว: Frontend เป็นผู้คำนวณค่านี้แต่เพียงจุดเดียว (Single Source of Truth)
+ * ตอน Check-in (ดู common.js: computeHalfDayStatusOnCheckin) แล้วส่งมาพร้อม payload.halfDayStatus
+ * ให้ saveLog() เก็บค่าตรงๆ ลง Sheet (ดูใน saveLog() ด้านล่าง) — ฝั่ง Backend/Sheet นี้จึงมีหน้าที่
+ * "เก็บค่าอย่างเดียว" ไม่มี Logic คำนวณ halfDayStatus ใดๆ ทั้งสิ้นอีกต่อไป
+ *
+ * ⚠️ เดิมเคยมีฟังก์ชัน syncHalfDayStatusColumn() ไว้ batch คำนวณ/เขียนทับค่า halfDayStatus ของ
+ * "ทุกแถว" ใน Sheet Logs (ตั้งใจให้เรียกซ้ำได้เรื่อยๆ หรือแม้แต่ตั้ง time-driven trigger ให้รัน
+ * อัตโนมัติ) — ฟังก์ชันนี้ถูกลบออกแล้วโดยตั้งใจ เพราะขัดกับ Requirement ที่ว่าข้อมูลที่บันทึกแล้ว
+ * ถือเป็น Historical Data ห้ามคำนวณใหม่/เปลี่ยนย้อนหลังเด็ดขาด — ถ้ายังมี Trigger ใน Apps Script
+ * ที่เคยตั้งไว้ให้เรียกฟังก์ชันนี้ ให้เข้าไปลบ Trigger นั้นออกด้วย (Apps Script Editor > Triggers)
+ * ไม่งั้นจะมี error เพราะฟังก์ชันไม่มีอยู่แล้ว
  */
-const HALF_DAY_FIRST_LABEL = "ครึ่งแรก";
-const HALF_DAY_SECOND_LABEL = "ครึ่งหลัง";
-const HALF_DAY_WINDOW_MS_SERVER = 2 * 60 * 60 * 1000; // 2 ชั่วโมง — ต้องตรงกับ HALF_DAY_WINDOW_MS ใน common.js
-
-function bangkokDateKeyServer_(date) {
-  // date มาจาก parseLogDate() ซึ่งสร้างจากตัวเลขในข้อความตรงๆ ไม่มี timezone offset ใดๆ แอบแฝง
-  // จึงอ่านปี/เดือน/วันออกมาตรงๆ ได้เลย ห้ามใช้ Utilities.formatDate(...,"Asia/Bangkok") ตรงนี้เด็ดขาด
-  // เพราะจะเป็นการแปลง timezone ซ้ำอีกชั้นทั้งที่ตัวเลขถูกต้องอยู่แล้ว
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return y + "-" + m + "-" + d;
-}
-
-function halfDayGroupKeyServer_(row) {
-  const uid = String(row.userId || "").trim();
-  const mail = String(row.email || "")
-    .trim()
-    .toLowerCase();
-  const name = String(row.displayName || row.name || "")
-    .trim()
-    .toLowerCase();
-  const person = uid
-    ? "uid:" + uid
-    : mail
-      ? "email:" + mail
-      : name
-        ? "name:" + name
-        : "anon";
-  const date = parseLogDate(row.createdAt);
-  const dateKey = date ? bangkokDateKeyServer_(date) : "unknown";
-  return person + "|" + dateKey;
-}
 
 /**
- * คำนวณ "ครึ่งแรก/ครึ่งหลัง" ให้ทุกแถวใน Sheet Logs แล้วเขียนกลับลงคอลัมน์ halfDayStatus ทีเดียว (batch)
- * เรียกฟังก์ชันนี้ตรงๆ จาก Apps Script editor เพื่อ backfill ข้อมูลเก่าทั้งหมดในครั้งแรก
- * และเรียกซ้ำได้เรื่อยๆ อย่างปลอดภัย (idempotent) — ใช้ตั้งเป็น time-driven trigger เพื่ออัปเดตอัตโนมัติได้เลย
+ * =======================================================================
+ * BACKFILL halfDayStatus สำหรับข้อมูลเก่า (เรียกด้วยมือ "ครั้งเดียว" เท่านั้น)
+ * =======================================================================
+ * ⚠️ ข้อแตกต่างจาก syncHalfDayStatusColumn() เดิมที่ถูกลบไปแล้ว:
+ * - เติมค่าให้ "เฉพาะแถวที่ halfDayStatus ว่างอยู่" เท่านั้น (ข้อมูลเก่าก่อนระบบเปลี่ยนมาให้ Frontend
+ *   คำนวณตอน Check-in) แถวที่มีค่า Snapshot บันทึกไว้แล้วจะไม่ถูกแตะต้อง/เขียนทับเด็ดขาด
+ * - ห้ามตั้งเป็น Time-driven Trigger ให้รันอัตโนมัติเด็ดขาด เพราะจะกลายเป็นการคำนวณซ้ำไปเรื่อยๆ
+ *   ผิด Requirement "ห้าม Recalculate ข้อมูลเก่า" — ให้เปิด Apps Script Editor แล้วเลือกฟังก์ชันนี้
+ *   กดปุ่ม Run (▶) ด้วยมือ "ครั้งเดียว" เท่านั้น หลังรันเสร็จ ค่าที่เติมไปจะกลายเป็น Snapshot ถาวร
+ *   เหมือนแถวใหม่ทุกประการ (แก้ไขกฎภายหลังจะไม่กระทบแถวเหล่านี้อีก)
+ * - ใช้กฎ ณ วันที่รันฟังก์ชันนี้ (ภายใน 2 ชั่วโมง = ครึ่งแรก) ต้องตรงกับ HALF_DAY_WINDOW_MS ใน common.js
+ * แนะนำสำรอง Sheet (File > Make a copy) ไว้ก่อนรัน เผื่อจำเป็นต้องย้อนกลับ
  */
-function syncHalfDayStatusColumn() {
+function backfillMissingHalfDayStatus() {
   const sheet = ensureLogsSheetSchema();
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return { ok: true, updated: 0 };
 
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  const createdAtCol = headers.indexOf("createdAt");
   const statusCol = headers.indexOf("halfDayStatus");
-  if (createdAtCol === -1 || statusCol === -1) {
-    throw new Error("ไม่พบคอลัมน์ createdAt หรือ halfDayStatus ใน Sheet Logs");
+  if (statusCol === -1) {
+    throw new Error("ไม่พบคอลัมน์ halfDayStatus ใน Sheet Logs");
   }
 
   const numRows = lastRow - 1;
   const values = sheet.getRange(2, 1, numRows, headers.length).getValues();
-
   const rows = values.map(function (rowArr) {
     const obj = {};
-    headers.forEach(function (h, i) {
-      obj[h] = rowArr[i];
-    });
+    headers.forEach(function (h, i) { obj[h] = rowArr[i]; });
     return obj;
   });
 
-  // จัดกลุ่มตามคน+วัน แล้วหาเวลาอ้างอิง (เช็คอินครั้งแรกสุดของวันนั้น) เหมือน common.js
+  // หาเฉพาะ index ของแถวที่ halfDayStatus ยัง "ว่าง" เท่านั้น — แถวอื่นจะไม่ถูกเขียนทับเด็ดขาด
+  const missingIdx = [];
+  rows.forEach(function (row, idx) {
+    if (!String(row.halfDayStatus || "").trim()) missingIdx.push(idx);
+  });
+  if (!missingIdx.length) return { ok: true, updated: 0, message: "ไม่มีแถวว่างที่ต้อง backfill" };
+
+  const HALF_DAY_FIRST_LABEL = "ครึ่งแรก";
+  const HALF_DAY_SECOND_LABEL = "ครึ่งหลัง";
+  const HALF_DAY_WINDOW_MS_BACKFILL = 2 * 60 * 60 * 1000; // ต้องตรงกับ HALF_DAY_WINDOW_MS ใน common.js
+
+  function bangkokDateKeyBackfill_(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    return y + "-" + m + "-" + d;
+  }
+  function halfDayGroupKeyBackfill_(row) {
+    const uid = String(row.userId || "").trim();
+    const mail = String(row.email || "").trim().toLowerCase();
+    const name = String(row.displayName || row.name || "").trim().toLowerCase();
+    const person = uid ? "uid:" + uid : mail ? "email:" + mail : name ? "name:" + name : "anon";
+    const date = parseLogDate(row.createdAt);
+    const dateKey = date ? bangkokDateKeyBackfill_(date) : "unknown";
+    return person + "|" + dateKey;
+  }
+
+  // จัดกลุ่มด้วย "ทุกแถว" (รวมแถวที่มีค่าอยู่แล้ว) เพื่อหาเวลาอ้างอิง "Check-in ครั้งแรกของวัน" ที่ถูกต้อง
+  // แต่จะเขียนกลับเฉพาะ index ที่อยู่ใน missingIdx เท่านั้น
   const groups = {};
   rows.forEach(function (row, idx) {
-    const key = halfDayGroupKeyServer_(row);
+    const key = halfDayGroupKeyBackfill_(row);
     const time = parseLogDate(row.createdAt);
     if (!groups[key]) groups[key] = [];
     groups[key].push({ idx: idx, time: time });
   });
 
-  const statusByIdx = new Array(rows.length).fill("");
+  const statusByIdx = {};
   Object.keys(groups).forEach(function (key) {
-    const entries = groups[key].filter(function (e) {
-      return e.time instanceof Date;
-    });
+    const entries = groups[key].filter(function (e) { return e.time instanceof Date; });
     if (!entries.length) return;
-    const refMs = entries.reduce(function (min, e) {
-      return Math.min(min, e.time.getTime());
-    }, entries[0].time.getTime());
+    const refMs = entries.reduce(function (min, e) { return Math.min(min, e.time.getTime()); }, entries[0].time.getTime());
     entries.forEach(function (e) {
       const diff = e.time.getTime() - refMs;
-      statusByIdx[e.idx] =
-        diff <= HALF_DAY_WINDOW_MS_SERVER
-          ? HALF_DAY_FIRST_LABEL
-          : HALF_DAY_SECOND_LABEL;
+      statusByIdx[e.idx] = diff <= HALF_DAY_WINDOW_MS_BACKFILL ? HALF_DAY_FIRST_LABEL : HALF_DAY_SECOND_LABEL;
     });
   });
 
-  const statusColumnValues = statusByIdx.map(function (s) {
-    return [s];
+  missingIdx.forEach(function (idx) {
+    const value = statusByIdx[idx] || "";
+    sheet.getRange(2 + idx, statusCol + 1, 1, 1).setValue(value);
   });
-  sheet.getRange(2, statusCol + 1, numRows, 1).setValues(statusColumnValues);
 
-  return { ok: true, updated: numRows };
+  return { ok: true, updated: missingIdx.length };
 }
 
 /**
@@ -1578,6 +1576,10 @@ function saveLog(payload) {
     // Employee ID: ประทับค่าไว้ที่แถว Log ตอนเช็กอิน ถ้า Sheet "user" มีข้อมูลอยู่แล้ว (admin เคยกรอกไว้ก่อนหน้า)
     // ถ้ายังไม่มี จะปล่อยว่างไว้ก่อน แล้ว enrichLogsWithUserNames() จะเติมให้ทีหลังตอนอ่านข้อมูล (ถ้า admin มากรอกเพิ่มภายหลัง)
     if (h === "employeeId") return (lineUser && lineUser.employeeId) || "";
+    // halfDayStatus: Frontend เป็นผู้คำนวณค่านี้มาก่อนแล้ว (Single Source of Truth) ตอนนี้เก็บค่าที่
+    // ส่งมาตรงๆ เป็น Snapshot เท่านั้น — ห้ามคำนวณใหม่ที่นี่เด็ดขาด (ดูคอมเมนต์หัวไฟล์เรื่อง
+    // syncHalfDayStatusColumn() ที่เลิกใช้แล้ว เพราะ recalculate ทับข้อมูลเก่าซึ่งผิด Requirement)
+    if (h === "halfDayStatus") return payload.halfDayStatus ? String(payload.halfDayStatus) : "";
     return "";
   });
 

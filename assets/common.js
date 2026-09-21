@@ -7,7 +7,7 @@
   // const LIFF_ID = "2008594376-aBuTJTic";
 
   //test
-  const API_URL = "https://script.google.com/macros/s/AKfycbxAI3K0IFpzps6yJw2h9ZPuvkaRWoPHvW-NJKob92jt7KIolLKLEfETTVoCdNk8Y3cf/exec";
+  const API_URL = "https://script.google.com/macros/s/AKfycbyZkfTo42-WCyzI4mXsqKHhwFuPkGx4Y9w4SpE41h5w6_S9IEaGXY6WOwRyrQs3DABG/exec";
   const LIFF_ID = "2008594376-MrQ7IGVX";
 
   const DEFAULT_AREA = {
@@ -622,10 +622,77 @@
   }
 
   // Helper สะดวกใช้: คืน array ใหม่ (ไม่แก้ของเดิม) โดยเพิ่ม field "halfDayStatus" ให้แต่ละแถว
+  // ⚠️ สำคัญ (Historical Data): ตั้งแต่ระบบเปลี่ยนมาให้ Frontend คำนวณ halfDayStatus "ตอน Check-in"
+  // แล้วบันทึกเป็นค่า Snapshot ลง Database เลย (ดู computeHalfDayStatusOnCheckin) ฟังก์ชันนี้ต้อง
+  // "ใช้ค่าที่บันทึกไว้แล้วก่อนเสมอ" (row.halfDayStatus) ห้ามคำนวณทับค่าที่มีอยู่แล้วเด็ดขาด
+  // เพราะจะทำให้ข้อมูลเก่าเปลี่ยนไปตามกฎปัจจุบันที่อาจถูกแก้ในอนาคต (ผิด Requirement ข้อ "ห้าม
+  // Recalculate ข้อมูลเก่า") — จะคำนวณ fallback ให้เฉพาะแถวที่ "ไม่มี" ค่านี้เก็บไว้ (ข้อมูลเก่าก่อน
+  // ที่ระบบจะเริ่มบันทึกค่านี้ตอน Check-in) และค่าที่คำนวณ fallback นี้ใช้เพื่อ "แสดงผล" ชั่วคราวเท่านั้น
+  // ไม่ได้เขียนกลับไปบันทึกที่ไหน
   function annotateHalfDayStatus(rows) {
     const list = Array.isArray(rows) ? rows : [];
+    const hasMissing = list.some((row) => !String(row?.halfDayStatus || "").trim());
+    if (!hasMissing) return list.slice();
+
+    // คำนวณ fallback จาก rows ทั้งหมดเพื่อให้เวลาอ้างอิง "Check-in ครั้งแรกของวัน" ถูกต้อง
+    // (ต้องมี context ของ log อื่นๆ ในวันเดียวกันของคนเดียวกัน ถึงจะหาเวลาอ้างอิงได้ถูก)
     const map = computeHalfDayStatusMap(list);
-    return list.map((row, idx) => ({ ...row, halfDayStatus: map.get(idx) || "" }));
+    return list.map((row, idx) => {
+      const existing = String(row?.halfDayStatus || "").trim();
+      if (existing) return row; // มีค่าบันทึกไว้แล้ว -> ใช้ค่าเดิมเสมอ ไม่คำนวณทับ
+      return { ...row, halfDayStatus: map.get(idx) || "" };
+    });
+  }
+
+  // ============================================
+  // คำนวณ halfDayStatus "ตอน Check-in" (Frontend เป็น Single Source of Truth)
+  // ============================================
+  // เรียกใช้ก่อนบันทึก Check-in ทุกครั้ง แล้วแนบค่าที่ได้ไปกับ payload ที่จะส่งไปเก็บ (Database
+  // เก็บค่าอย่างเดียว ไม่มี Logic คำนวณใดๆ ทั้งสิ้น) ค่าที่คำนวณได้ตรงนี้ถือเป็นค่าถาวร (Snapshot)
+  // ประจำ log แถวนั้นไปตลอด ต่อให้ภายหลังเปลี่ยนกฎ (เช่น เปลี่ยน HALF_DAY_WINDOW_MS) ค่าที่บันทึก
+  // ไปแล้วจะไม่ถูกคำนวณใหม่ กฎใหม่จะมีผลเฉพาะ Check-in ที่เกิดขึ้นหลังจาก Deploy เท่านั้น
+  //
+  // entry ต้องมี: userId (แนะนำ, แม่นยำสุด) หรือ email หรือ displayName/name อย่างใดอย่างหนึ่ง
+  // และ time/createdAt เป็นเวลา Check-in ปัจจุบัน (ค่าที่จะบันทึกลง payload.createdAt)
+  async function computeHalfDayStatusOnCheckin(entry, timeoutMs = 15000) {
+    try {
+      const checkinTime = parseBangkokDateTime(entry?.time || entry?.createdAt) || new Date();
+      const dateKey = bangkokDateKeyFromDate(checkinTime);
+
+      // ดึงเฉพาะ log ของ "คนเดียวกัน" ใน "วันเดียวกัน" (ให้ Backend กรองให้ ลดข้อมูลที่ต้องโหลด)
+      // ใช้ userId ก่อนเสมอถ้ามี (แม่นยำสุด) ถ้าไม่มีค่อย fallback ไป email แล้วค่อย displayName/name
+      const uid = String(entry?.userId || "").trim();
+      const mail = String(entry?.email || "").trim();
+      const name = String(entry?.displayName || entry?.name || "").trim();
+      const query = { from: dateKey, to: dateKey, raw: false };
+      if (uid) query.userId = uid;
+      else if (mail) query.email = mail;
+      else if (name) query.name = name;
+
+      const todaysLogs = uid || mail || name ? await getLogs(query, timeoutMs) : [];
+
+      // กรองซ้ำอีกชั้นด้วย key เดียวกับที่ใช้จัดกลุ่มตอนคำนวณฝั่ง Logs (กันเคส filter ฝั่ง server
+      // ไม่แม่นพอ เช่น name เป็นการค้นแบบ partial match)
+      const entryKey = halfDayGroupKey({ userId: uid, email: mail, displayName: name, createdAt: checkinTime });
+      const sameGroupTimes = (Array.isArray(todaysLogs) ? todaysLogs : [])
+        .filter((row) => halfDayGroupKey(row) === entryKey)
+        .map((row) => parseBangkokDateTime(row?.createdAt || row?.time))
+        .filter((d) => d instanceof Date);
+
+      // เวลาอ้างอิง = Check-in ครั้งแรกสุดของวันนี้ (รวม log เก่าที่มีอยู่แล้ว) หรือถ้ายังไม่มี log
+      // มาก่อนเลยวันนี้ ก็คือ Check-in ครั้งนี้เองเป็นครั้งแรก -> เวลาอ้างอิง = เวลา Check-in นี้
+      const refMs = sameGroupTimes.length
+        ? Math.min(checkinTime.getTime(), ...sameGroupTimes.map((d) => d.getTime()))
+        : checkinTime.getTime();
+
+      const diffFromFirstCheckin = checkinTime.getTime() - refMs;
+      return diffFromFirstCheckin <= HALF_DAY_WINDOW_MS ? HALF_DAY_FIRST : HALF_DAY_SECOND;
+    } catch (err) {
+      // หา log ก่อนหน้าไม่ได้ (เช่น เน็ตหลุด/timeout) -> ไม่บล็อกการ Check-in ใช้ค่า default
+      // "ครึ่งแรก" ไปก่อน (สมมติว่าเป็นครั้งแรกของวัน) ดีกว่าทำให้ Check-in ล้มเหลวไปเลย
+      console.warn("[computeHalfDayStatusOnCheckin] ไม่สามารถคำนวณได้ ใช้ค่า default:", err);
+      return HALF_DAY_FIRST;
+    }
   }
 
   function getVisibleAreas(areas, role, uid, email) {
@@ -1029,8 +1096,10 @@
     parseBangkokDateTime,
     HALF_DAY_FIRST,
     HALF_DAY_SECOND,
+    HALF_DAY_WINDOW_MS,
     computeHalfDayStatusMap,
     annotateHalfDayStatus,
+    computeHalfDayStatusOnCheckin,
     getVisibleAreas,
     normalizeArea,
     normalizeAreaList,

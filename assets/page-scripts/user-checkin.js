@@ -356,7 +356,9 @@ createApp({
       }
     }
 
-    function buildPayload(lat, lng, accuracy) {
+    // Payload พื้นฐาน (Sync) — ยังไม่มี halfDayStatus เพราะ Test Mode (Sheet "Test") ไม่ได้เก็บ
+    // ค่านี้ และเรียกฟังก์ชันนี้ถี่มาก (ทุก sample GPS) จึงไม่ควรยิง query คำนวณ halfDayStatus ซ้ำๆ
+    function buildBasePayload(lat, lng, accuracy) {
       const pending = common.getPendingCheckin() || {};
       const decoded = liff.getDecodedIDToken
         ? liff.getDecodedIDToken()
@@ -367,7 +369,7 @@ createApp({
       // ไม่ใช่ค่าว่าง) ห้ามใช้ `accuracy || 0` เพราะ 0 จะถูกมองเป็น falsy แล้วเปลี่ยนเป็นค่าอื่นโดยไม่ตั้งใจ
       const safeAccuracy = Number.isFinite(Number(accuracy)) ? Number(accuracy) : null;
 
-      const payload = {
+      return {
         ...pending,
         site: site.value,
         session,
@@ -381,6 +383,15 @@ createApp({
         time: common.formatBangkokNow ? common.formatBangkokNow() : new Date().toISOString(),
         userId: profile.value?.userId || "",
       };
+    }
+
+    // ⚠️ Frontend เป็นผู้คำนวณ halfDayStatus แต่เพียงจุดเดียว (Single Source of Truth) ก่อน Save
+    // Check-in จริง (ไม่ใช่ Test Mode) แล้วแนบค่าที่คำนวณได้ไปกับ payload เป็น Snapshot เลย
+    // ดู common.js: computeHalfDayStatusOnCheckin (เหมือนกับที่ทำใน user-checkin-enhanced.js)
+    async function buildPayload(lat, lng, accuracy) {
+      const basePayload = buildBasePayload(lat, lng, accuracy);
+      const halfDayStatus = await common.computeHalfDayStatusOnCheckin(basePayload);
+      const payload = { ...basePayload, halfDayStatus };
 
       // Debug log: payload สุดท้ายที่จะส่งไปบันทึก (lat, lng, accuracy ต้องไม่หายไประหว่างทาง)
       console.log("[UserCheckin] buildPayload:", {
@@ -389,6 +400,7 @@ createApp({
         accuracy: payload.accuracy,
         maxAccuracy: payload.maxAccuracy,
         areaId: payload.areaId,
+        halfDayStatus: payload.halfDayStatus,
       });
 
       return payload;
@@ -586,7 +598,7 @@ createApp({
       let lastAcceptedAt = samplingStartTime;
 
       watchId = navigator.geolocation.watchPosition(
-        (pos) => {
+        async (pos) => {
           const lat = pos.coords.latitude;
           const lng = pos.coords.longitude;
           const accuracy = pos.coords.accuracy;
@@ -621,7 +633,7 @@ createApp({
             // ต้องเก็บให้ครบ 10 ครั้งแม้ Check-in เพียงครั้งเดียว
             // ============================================================
             if (testMode) {
-              const testPayload = buildPayload(lat, lng, accuracy);
+              const testPayload = buildBasePayload(lat, lng, accuracy);
               // คำนวณระยะห่างจากจุดศูนย์กลางพื้นที่ (distantcenter)
               const dist = calculateDistance(lat, lng, config.value.centerLat, config.value.centerLng);
               
@@ -683,7 +695,7 @@ createApp({
 
                     loading.value = true;
 
-                    const payload = buildPayload(
+                    const payload = await buildPayload(
                       bestGPS.lat,
                       bestGPS.lng,
                       bestGPS.accuracy,

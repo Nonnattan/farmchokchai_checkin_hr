@@ -119,7 +119,24 @@ const { createApp, computed, onMounted, ref, nextTick } = Vue;
       // ตอนนี้ await ผลลัพธ์ก่อน เช็ก ok:false จาก server แล้วค่อย redirect เฉพาะตอนบันทึกสำเร็จจริง
       loading.value = true;
       try {
-        const res = await common.addLog({ site: site.value, session, status: "checked_in", lat: currentLocation.value.lat, lng: currentLocation.value.lng, accuracy: currentLocation.value.accuracy, boundary: boundary.value });
+        // ⚠️ Frontend เป็นผู้คำนวณ halfDayStatus แต่เพียงจุดเดียว (Single Source of Truth) ก่อน Save
+        // เหมือนกับหน้า user-checkin — ดู common.js: computeHalfDayStatusOnCheckin
+        // หน้านี้ไม่มี userId/email/displayName ผูกกับผู้ใช้ (ไม่ผ่าน LIFF) จึงคำนวณแบบ "ไม่มีข้อมูล
+        // คนก่อนหน้า" (ปลอดภัยไว้ก่อน = ถือเป็นครั้งแรกของวันเสมอ) ไม่กระทบ business logic การเช็คอิน
+        // หรือการตรวจ geofence แต่อย่างใด
+        const checkinTime = common.formatBangkokNow ? common.formatBangkokNow() : new Date().toISOString();
+        const basePayload = {
+          site: site.value,
+          session,
+          status: "checked_in",
+          lat: currentLocation.value.lat,
+          lng: currentLocation.value.lng,
+          accuracy: currentLocation.value.accuracy,
+          boundary: boundary.value,
+          time: checkinTime,
+        };
+        const halfDayStatus = await common.computeHalfDayStatusOnCheckin(basePayload);
+        const res = await common.addLog({ ...basePayload, halfDayStatus });
         if (res && res.ok === false) {
           throw new Error(res.err || res.error || res.message || "Server ปฏิเสธการบันทึกข้อมูล");
         }

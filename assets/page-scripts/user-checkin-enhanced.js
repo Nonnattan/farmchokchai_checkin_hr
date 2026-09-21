@@ -542,7 +542,11 @@ createApp({
       return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     }
 
-    function buildPayload(lat, lng, accuracy) {
+    // ⚠️ Frontend เป็นผู้คำนวณ halfDayStatus แต่เพียงจุดเดียว (Single Source of Truth) ก่อน Save
+    // ทุกครั้ง แล้วแนบค่าที่คำนวณได้ไปกับ payload เป็น Snapshot เลย — Backend/Database มีหน้าที่
+    // เก็บค่าอย่างเดียว ไม่คำนวณซ้ำ และห้ามคำนวณใหม่ตอนเปิดหน้า Logs ในภายหลัง (ดู common.js:
+    // computeHalfDayStatusOnCheckin) จึงต้องเปลี่ยน buildPayload เป็น async เพื่อรอผลก่อนส่งไปบันทึก
+    async function buildPayload(lat, lng, accuracy) {
       const pending = common.getPendingCheckin() || {};
       const decoded = liff.getDecodedIDToken
         ? liff.getDecodedIDToken()
@@ -551,7 +555,7 @@ createApp({
 
       const safeAccuracy = Number.isFinite(Number(accuracy)) ? Number(accuracy) : null;
 
-      const payload = {
+      const basePayload = {
         ...pending,
         site: site.value,
         session,
@@ -568,12 +572,18 @@ createApp({
         checkinRequestId: pending.checkinRequestId || generateCheckinRequestId(),
       };
 
+      // คำนวณ halfDayStatus จากเวลา Check-in นี้ + ประวัติ Check-in วันเดียวกันของคนนี้ (Frontend
+      // เป็นคนคำนวณเท่านั้น ไม่ได้ส่งไปให้ Backend คำนวณ) แล้วแนบเป็น Snapshot ไปกับ payload เลย
+      const halfDayStatus = await common.computeHalfDayStatusOnCheckin(basePayload);
+      const payload = { ...basePayload, halfDayStatus };
+
       console.log("[UserCheckin] buildPayload:", {
         lat: payload.lat,
         lng: payload.lng,
         accuracy: payload.accuracy,
         maxAccuracy: payload.maxAccuracy,
         areaId: payload.areaId,
+        halfDayStatus: payload.halfDayStatus,
       });
 
       return payload;
@@ -815,7 +825,7 @@ createApp({
               loading.value = true;
               updateLoadingStep('save', 'loading');
 
-              const payload = buildPayload(
+              const payload = await buildPayload(
                 bestGPS.lat,
                 bestGPS.lng,
                 bestGPS.accuracy,
