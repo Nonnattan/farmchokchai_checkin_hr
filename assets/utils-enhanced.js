@@ -385,7 +385,37 @@
       };
     }
 
-    const message = String(err?.message || err?.toString() || '').toLowerCase();
+    // ⚠️ BUGFIX (Error "เกิดข้อผิดพลาด GPS" ตอนสแกนเช็คอินช่วงเร่งด่วน, ไม่เกี่ยวกับ GPS จริงๆ):
+    // เดิมฟังก์ชันนี้จัดหมวด error ด้วยการเช็ค substring บน err.message ทั้งก้อนเท่านั้น เมื่อ
+    // requestJson() (common.js) เจอ Google ตอบกลับเป็นหน้า HTML traffic-block แทน JSON (ช่วง
+    // peak ที่มีคนสแกนพร้อมกันเยอะ) ข้อความ error ที่ฝัง HTML ดิบเข้ามาจะมีคำว่า "location" ปน
+    // อยู่แน่ๆ (window.location ฯลฯ ในสคริปต์ boilerplate ของ Google) ทำให้จับคู่ผิดเป็น GPS error
+    // แก้โดย: เช็ค err.type ที่ requestJson() ติดมาให้ (ถ้ามี) เป็นอันดับแรก ก่อน logic
+    // substring-matching เดิม เพื่อจัดหมวด/ข้อความให้ตรงปัญหาจริงโดยไม่ต้องเดาจาก string เลย
+    if (err && err.type === 'google_traffic_block') {
+      return {
+        type: 'google_traffic_block',
+        title: 'ระบบ Google หน่วงชั่วคราว',
+        message:
+          'มีการสแกนพร้อมกันจำนวนมากในช่วงนี้ ระบบ Google บล็อกการเชื่อมต่อชั่วคราว ข้อมูลยังไม่ถูกบันทึกค่ะ กรุณารอ 10-20 วินาทีแล้วกด "ลองใหม่" อีกครั้ง',
+        context,
+        originalError: err,
+      };
+    }
+    if (err && err.type === 'invalid_json_response') {
+      return {
+        type: 'invalid_json_response',
+        title: 'เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ',
+        message: 'ระบบตอบกลับข้อมูลไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง',
+        context,
+        originalError: err,
+      };
+    }
+
+    // Fallback: logic แบบ substring-matching เดิม สำหรับ error ที่ไม่มี err.type ติดมา (เช่น
+    // error จริงจาก navigator.geolocation) — ตัด message ให้เหลือ 200 ตัวอักษรแรกก่อนเช็ค
+    // เพื่อกันเคสอื่นในอนาคตที่บังเอิญมี raw text ยาวๆ ปนเข้ามาอีกแล้วจับคู่ผิดหมวดแบบนี้ซ้ำ
+    const message = String(err?.message || err?.toString() || '').toLowerCase().slice(0, 200);
     const code = err?.code;
 
     // GPS Errors

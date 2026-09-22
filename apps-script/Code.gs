@@ -111,7 +111,20 @@ function ensureLogsSheetSchema() {
     headers = headers.concat(missing);
   }
 
-  forceCreatedAtPlainText_(sheet, headers);
+  // ⚡ PERFORMANCE FIX (สาเหตุหลักที่หน้า Logs/QR Code/Admin โหลดช้า):
+  // เดิมโค้ดตรงนี้เรียก forceCreatedAtPlainText_() แบบ "ไม่มีเงื่อนไข" ทุกครั้งที่ฟังก์ชันนี้ถูกเรียก
+  // ซึ่งหมายถึงทุกครั้งที่มีคนเปิดหน้า Logs, เปลี่ยนแท็บ (วันนี้/7วัน/1เดือน ฯลฯ), กด "โหลดเพิ่ม",
+  // หรือกด Export — เพราะ handleGetLogs() เรียก ensureLogsSheetSchema() ทุกครั้งเป็นอันดับแรกเสมอ
+  // forceCreatedAtPlainText_() ภายในจะสั่ง setNumberFormat("@") ทับคอลัมน์ createdAt "ทั้งคอลัมน์"
+  // (sheet.getMaxRows() แถว อาจเป็นพันแถวขึ้นไปเมื่อข้อมูลสะสมนานเข้า) ซึ่ง setNumberFormat เป็น
+  // Sheets API operation ที่ใช้เวลานานกว่าการอ่าน/เขียนค่าเซลล์ธรรมดามาก และยิ่งช้าลงเรื่อยๆ ตามจำนวน
+  // แถวที่เพิ่มขึ้นทุกวัน ทั้งที่ format ที่เคยตั้งไปแล้วไม่มีทางเปลี่ยนเองได้เลยถ้าไม่มีใครไปแก้ไข
+  // คอลัมน์นั้นตรงๆ — จึงไม่จำเป็นต้อง "ตั้งซ้ำ" ทุกครั้งที่แค่อ่านข้อมูล
+  // แก้โดย: เรียก forceCreatedAtPlainText_() เฉพาะตอน schema เปลี่ยนแปลงจริงเท่านั้น
+  // (เปลี่ยนชื่อหัวคอลัมน์เก่า หรือเพิ่งเพิ่มคอลัมน์ใหม่ที่ขาดไป) ไม่ใช่ทุกครั้งที่เรียกฟังก์ชันนี้
+  if (renamed || missing.length > 0) {
+    forceCreatedAtPlainText_(sheet, headers);
+  }
 
   return sheet;
 }
@@ -378,6 +391,100 @@ function cacheCheckinResult(requestId, result) {
   }
 }
 
+/**
+ * =======================================================================
+ * ⚡ SHEET-READ CACHE (แก้ปัญหาหน้า Logs / QR Code / Admin โหลดช้า)
+ * =======================================================================
+ * ต้นเหตุอีกจุดที่ทำให้หน้าที่ต้องอ่านข้อมูล (Logs, พื้นที่/QR, Users) ช้าคือทุกครั้งที่ Frontend
+ * ยิง request มา (เปิดหน้า, สลับแท็บวันที่, เลื่อนดูหน้าเพิ่ม "โหลดเพิ่ม", แม้แต่ระหว่างเช็คอิน 1 ครั้ง
+ * ที่ต้องอ่านพื้นที่ไปตรวจ geofence) Apps Script จะเปิด Spreadsheet แล้วอ่านข้อมูล "ทั้งชีต" ใหม่จาก
+ * Google Sheets ทุกรอบ ทั้งที่ข้อมูลแทบไม่เปลี่ยนเลยภายในไม่กี่วินาทีนั้น (Frontend ตั้งใจปิด browser
+ * cache ไว้อยู่แล้วเพื่อความสด ดู cache:"no-store" ใน common.js) — ผลคือถ้า Admin เปิดหน้า Logs แล้ว
+ * สลับแท็บไปมา หรือเลื่อนโหลดหน้าเพิ่มหลายๆ ครั้งติดกัน แต่ละครั้งจะอ่านทั้งชีต Logs + ทั้งชีต user
+ * (สำหรับ enrich ชื่อ) ซ้ำข้อมูลเดิมทุกครั้ง ยิ่งชีตมีแถวสะสมมากเท่าไหร่ก็ยิ่งช้าขึ้นเรื่อยๆ
+ *
+ * วิธีแก้: แคชผลลัพธ์การอ่านชีตไว้ใน CacheService (ของ Google เอง ไม่ใช่ตัวแปรในโค้ด เพราะ Apps
+ * Script Web App แต่ละ request รันเป็นคนละ execution ไม่มี memory ร่วมกัน) เป็นเวลาสั้นๆ (ค่าเริ่มต้น
+ * ~20-30 วินาที ปรับได้ที่ SHEET_CACHE_TTL_SEC ด้านล่าง) พอมี request ถัดไปเข้ามาในช่วงเวลานั้น
+ * (เช่น กด "โหลดเพิ่ม" ต่อกันเร็วๆ) จะได้ข้อมูลจาก cache ทันทีโดยไม่ต้องอ่านชีตซ้ำ และเมื่อมีการ
+ * บันทึก/แก้ไขข้อมูลจริง (เช่น มีคนเช็คอินใหม่ หรือ admin แก้ชื่อ) จะล้าง cache ทันที
+ * (ดู invalidateSheetCache_ ที่ถูกเรียกในฟังก์ชันที่เขียนข้อมูลด้านล่าง) เพื่อไม่ให้เห็นข้อมูลเก่าค้าง
+ *
+ * CacheService ของ Google จำกัดขนาด "ไม่เกิน 100KB ต่อ 1 key" — ถ้าข้อมูลทั้งชีต (โดยเฉพาะ Logs ที่
+ * สะสมได้เยอะ) ใหญ่กว่านั้น จะเก็บไม่ได้ทั้งก้อน จึงต้องตัดแบ่งเป็นชิ้นย่อย (chunk) เก็บหลาย key แล้ว
+ * ต่อกลับตอนอ่าน (ฟังก์ชัน cachePutJson_ / cacheGetJson_ ด้านล่างทำหน้าที่นี้อัตโนมัติ)
+ */
+const SHEET_CACHE_TTL_SEC = 25; // ข้อมูลจะ "เก่าได้สูงสุด" กี่วินาทีก่อนอ่านจาก Sheet จริงอีกครั้ง — ปรับได้ตามต้องการ
+const SHEET_CACHE_CHUNK_SIZE = 90000; // เผื่อ overhead ไว้จากลิมิต 100KB/key ของ CacheService
+
+function cacheGetJson_(key) {
+  try {
+    const cache = CacheService.getScriptCache();
+    const meta = cache.get(key + ":meta");
+    if (!meta) return null;
+    const count = parseInt(meta, 10);
+    if (!count || count <= 0) return null;
+    const keys = [];
+    for (let i = 0; i < count; i++) keys.push(key + ":" + i);
+    const chunks = cache.getAll(keys);
+    let text = "";
+    for (let i = 0; i < count; i++) {
+      const part = chunks[key + ":" + i];
+      if (part === undefined || part === null) return null; // chunk บางส่วนหมดอายุไม่พร้อมกัน ถือว่า cache miss ทั้งก้อน
+      text += part;
+    }
+    return JSON.parse(text);
+  } catch (e) {
+    return null; // cache อ่านไม่ได้ก็แค่ตกไปอ่านจาก Sheet จริงตามปกติ ไม่ทำให้ระบบพัง
+  }
+}
+
+function cachePutJson_(key, value, ttlSec) {
+  try {
+    const cache = CacheService.getScriptCache();
+    const text = JSON.stringify(value);
+    const count = Math.max(1, Math.ceil(text.length / SHEET_CACHE_CHUNK_SIZE));
+    const payload = {};
+    for (let i = 0; i < count; i++) {
+      payload[key + ":" + i] = text.slice(
+        i * SHEET_CACHE_CHUNK_SIZE,
+        (i + 1) * SHEET_CACHE_CHUNK_SIZE,
+      );
+    }
+    payload[key + ":meta"] = String(count);
+    cache.putAll(payload, ttlSec);
+  } catch (e) {
+    // เขียน cache ไม่สำเร็จ (เช่นข้อมูลใหญ่เกินโควต้ารวมของ CacheService) ก็ไม่เป็นไร
+    // แค่ไม่ได้ผลประโยชน์เรื่องความเร็วรอบถัดไป ไม่กระทบความถูกต้องของข้อมูล
+  }
+}
+
+function invalidateSheetCache_(sheetName) {
+  try {
+    const key = "sheet_data:" + sheetName;
+    const cache = CacheService.getScriptCache();
+    const meta = cache.get(key + ":meta");
+    const count = meta ? parseInt(meta, 10) : 0;
+    const keys = [key + ":meta"];
+    for (let i = 0; i < count; i++) keys.push(key + ":" + i);
+    cache.removeAll(keys);
+  } catch (e) {
+    // ล้าง cache ไม่สำเร็จ อย่างแย่ที่สุดคือ TTL (25 วิ) หมดเองในไม่ช้า ไม่กระทบความถูกต้องระยะยาว
+  }
+}
+
+// เหมือน getSheetDataAsObjects() ทุกประการ แต่ห่อด้วย cache สั้นๆ เพื่อลดการอ่านชีตซ้ำถี่ๆ
+// ใช้แทน getSheetDataAsObjects() ตรงๆ เฉพาะจุดที่เป็น "อ่านเพื่อแสดงผล" (GET) เท่านั้น
+// ห้ามใช้แทนในจุดที่กำลังจะเขียนข้อมูล/ต้องการข้อมูลสดที่สุด ณ วินาทีนั้นเพื่อกันข้อมูลชนกัน
+function getSheetDataAsObjectsCached_(sheetName, ttlSec) {
+  const key = "sheet_data:" + sheetName;
+  const cached = cacheGetJson_(key);
+  if (cached) return cached;
+  const data = getSheetDataAsObjects(sheetName);
+  cachePutJson_(key, data, ttlSec || SHEET_CACHE_TTL_SEC);
+  return data;
+}
+
 function getSheetByNameOrCreate(sheetName) {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   let sheet = ss.getSheetByName(sheetName);
@@ -418,7 +525,7 @@ function handleGetLocation() {
   // (ไม่ใช่แค่ค่าว่าง) ทำให้ maxAccuracy เป็น undefined เสมอจนกว่าจะมีการกด "บันทึก" พื้นที่นั้นซ้ำ
   // เรียกฟังก์ชันนี้ก่อนอ่านทุกครั้งจะเพิ่มคอลัมน์ที่ขาดให้อัตโนมัติ (ปลอดภัย ไม่กระทบข้อมูลเดิม)
   ensureLocationSheetSchema();
-  const rawData = getSheetDataAsObjects("location");
+  const rawData = getSheetDataAsObjectsCached_("location", SHEET_CACHE_TTL_SEC);
   // แมปข้อมูลให้มี areaId และ areaName เสมอ เพื่อให้ frontend ใช้งานง่าย
   const data = rawData.map((row) => {
     return {
@@ -580,6 +687,8 @@ function saveLocation(payload) {
     updateAreaAssignments(newId, payload.assignees);
   }
 
+  invalidateSheetCache_("location"); // ⚡ ล้าง cache ทันทีที่มีการบันทึกพื้นที่ใหม่/แก้ไข
+
   return { ok: true, data: [savedObj] };
 }
 
@@ -617,6 +726,8 @@ function deleteLocation(payload) {
       }
     }
   }
+
+  invalidateSheetCache_("location"); // ⚡ ล้าง cache ทันทีที่มีการลบพื้นที่
 
   return { ok: true, message: "ลบพื้นที่สำเร็จ" };
 }
@@ -675,7 +786,7 @@ function updateAreaAssignments(qrCode, assignees) {
  */
 
 function handleGetUsers(params) {
-  let data = getSheetDataAsObjects("users");
+  let data = getSheetDataAsObjectsCached_("users", SHEET_CACHE_TTL_SEC);
 
   // รองรับการกรองด้วย Email
   if (params.email) {
@@ -758,6 +869,8 @@ function saveUser(payload) {
     sheet.appendRow(rowData);
   }
 
+  invalidateSheetCache_("users"); // ⚡ ล้าง cache ทันทีที่มีการบันทึก user
+
   return { ok: true, data: [savedObj] };
 }
 
@@ -792,6 +905,8 @@ function deleteUser(payload) {
       }
     }
   }
+
+  invalidateSheetCache_("users"); // ⚡ ล้าง cache ทันทีที่มีการลบ user
 
   return { ok: true, message: "User deleted successfully" };
 }
@@ -856,7 +971,10 @@ function getLineCheckinUserByUserId(userId) {
   if (!uid) return null;
 
   ensureLineCheckinUserSheet();
-  const list = getSheetDataAsObjects(LINE_CHECKIN_USER_SHEET);
+  const list = getSheetDataAsObjectsCached_(
+    LINE_CHECKIN_USER_SHEET,
+    SHEET_CACHE_TTL_SEC,
+  );
   return (
     list.find(function (u) {
       return String(u.userId || "").trim() === uid;
@@ -897,6 +1015,7 @@ function ensureLineCheckinUser(payload) {
     if (updatedCol > -1) row[updatedCol] = now;
 
     sheet.getRange(rowIndex, 1, 1, headers.length).setValues([row]);
+    invalidateSheetCache_(LINE_CHECKIN_USER_SHEET); // ⚡ ล้าง cache เพราะเขียนแถวนี้ทับไปแล้ว
 
     const obj = {};
     for (let j = 0; j < headers.length; j++) {
@@ -914,6 +1033,7 @@ function ensureLineCheckinUser(payload) {
     return "";
   });
   sheet.appendRow(rowData);
+  invalidateSheetCache_(LINE_CHECKIN_USER_SHEET); // ⚡ ล้าง cache เพราะเพิ่งเพิ่มแถวใหม่
 
   const saved = {};
   for (let k = 0; k < headers.length; k++) {
@@ -950,6 +1070,7 @@ function updateLineCheckinUserCurrentName(userId, currentName, email) {
       return "";
     });
     sheet.appendRow(rowData);
+    invalidateSheetCache_(LINE_CHECKIN_USER_SHEET); // ⚡
     return true;
   }
 
@@ -968,6 +1089,7 @@ function updateLineCheckinUserCurrentName(userId, currentName, email) {
   if (updatedCol > -1) row[updatedCol] = now;
 
   sheet.getRange(rowIndex, 1, 1, headers.length).setValues([row]);
+  invalidateSheetCache_(LINE_CHECKIN_USER_SHEET); // ⚡ ล้าง cache ทันทีที่ admin แก้ชื่อ
   return true;
 }
 
@@ -998,6 +1120,7 @@ function updateLineCheckinUserEmployeeId(userId, employeeId) {
       return "";
     });
     sheet.appendRow(rowData);
+    invalidateSheetCache_(LINE_CHECKIN_USER_SHEET); // ⚡
     return true;
   }
 
@@ -1009,6 +1132,7 @@ function updateLineCheckinUserEmployeeId(userId, employeeId) {
   if (updatedCol > -1) row[updatedCol] = now;
 
   sheet.getRange(rowIndex, 1, 1, headers.length).setValues([row]);
+  invalidateSheetCache_(LINE_CHECKIN_USER_SHEET); // ⚡ ล้าง cache ทันทีที่ admin แก้ Employee ID
   return true;
 }
 
@@ -1116,6 +1240,7 @@ function repairCorruptedCreatedAtDates() {
 
   if (repaired > 0) {
     range.setValues(fixedValues);
+    invalidateSheetCache_(LOGS_SHEET_NAME); // ⚡ ล้าง cache เพราะแก้ข้อมูล createdAt ไปแล้ว
   }
 
   return { ok: true, repaired: repaired, totalRows: numRows };
@@ -1147,7 +1272,10 @@ function parseLogDate(value) {
 
 function buildLineCheckinUserMap() {
   ensureLineCheckinUserSheet();
-  const users = getSheetDataAsObjects(LINE_CHECKIN_USER_SHEET);
+  const users = getSheetDataAsObjectsCached_(
+    LINE_CHECKIN_USER_SHEET,
+    SHEET_CACHE_TTL_SEC,
+  );
   const byUserId = {};
   for (let i = 0; i < users.length; i++) {
     const uid = String(users[i].userId || "").trim();
@@ -1221,7 +1349,9 @@ function backfillMissingHalfDayStatus() {
   const values = sheet.getRange(2, 1, numRows, headers.length).getValues();
   const rows = values.map(function (rowArr) {
     const obj = {};
-    headers.forEach(function (h, i) { obj[h] = rowArr[i]; });
+    headers.forEach(function (h, i) {
+      obj[h] = rowArr[i];
+    });
     return obj;
   });
 
@@ -1230,7 +1360,8 @@ function backfillMissingHalfDayStatus() {
   rows.forEach(function (row, idx) {
     if (!String(row.halfDayStatus || "").trim()) missingIdx.push(idx);
   });
-  if (!missingIdx.length) return { ok: true, updated: 0, message: "ไม่มีแถวว่างที่ต้อง backfill" };
+  if (!missingIdx.length)
+    return { ok: true, updated: 0, message: "ไม่มีแถวว่างที่ต้อง backfill" };
 
   const HALF_DAY_FIRST_LABEL = "ครึ่งแรก";
   const HALF_DAY_SECOND_LABEL = "ครึ่งหลัง";
@@ -1244,9 +1375,19 @@ function backfillMissingHalfDayStatus() {
   }
   function halfDayGroupKeyBackfill_(row) {
     const uid = String(row.userId || "").trim();
-    const mail = String(row.email || "").trim().toLowerCase();
-    const name = String(row.displayName || row.name || "").trim().toLowerCase();
-    const person = uid ? "uid:" + uid : mail ? "email:" + mail : name ? "name:" + name : "anon";
+    const mail = String(row.email || "")
+      .trim()
+      .toLowerCase();
+    const name = String(row.displayName || row.name || "")
+      .trim()
+      .toLowerCase();
+    const person = uid
+      ? "uid:" + uid
+      : mail
+        ? "email:" + mail
+        : name
+          ? "name:" + name
+          : "anon";
     const date = parseLogDate(row.createdAt);
     const dateKey = date ? bangkokDateKeyBackfill_(date) : "unknown";
     return person + "|" + dateKey;
@@ -1264,12 +1405,19 @@ function backfillMissingHalfDayStatus() {
 
   const statusByIdx = {};
   Object.keys(groups).forEach(function (key) {
-    const entries = groups[key].filter(function (e) { return e.time instanceof Date; });
+    const entries = groups[key].filter(function (e) {
+      return e.time instanceof Date;
+    });
     if (!entries.length) return;
-    const refMs = entries.reduce(function (min, e) { return Math.min(min, e.time.getTime()); }, entries[0].time.getTime());
+    const refMs = entries.reduce(function (min, e) {
+      return Math.min(min, e.time.getTime());
+    }, entries[0].time.getTime());
     entries.forEach(function (e) {
       const diff = e.time.getTime() - refMs;
-      statusByIdx[e.idx] = diff <= HALF_DAY_WINDOW_MS_BACKFILL ? HALF_DAY_FIRST_LABEL : HALF_DAY_SECOND_LABEL;
+      statusByIdx[e.idx] =
+        diff <= HALF_DAY_WINDOW_MS_BACKFILL
+          ? HALF_DAY_FIRST_LABEL
+          : HALF_DAY_SECOND_LABEL;
     });
   });
 
@@ -1277,6 +1425,8 @@ function backfillMissingHalfDayStatus() {
     const value = statusByIdx[idx] || "";
     sheet.getRange(2 + idx, statusCol + 1, 1, 1).setValue(value);
   });
+
+  invalidateSheetCache_(LOGS_SHEET_NAME); // ⚡ ล้าง cache เพราะแก้ halfDayStatus ไปแล้ว
 
   return { ok: true, updated: missingIdx.length };
 }
@@ -1289,7 +1439,9 @@ function backfillMissingHalfDayStatus() {
 
 function handleGetLogs(params) {
   ensureLogsSheetSchema();
-  let data = enrichLogsWithUserNames(getSheetDataAsObjects(LOGS_SHEET_NAME));
+  let data = enrichLogsWithUserNames(
+    getSheetDataAsObjectsCached_(LOGS_SHEET_NAME, SHEET_CACHE_TTL_SEC),
+  );
 
   // กรองตาม userId หรือ email สำหรับการค้นหาชื่อ
   if (params.userId) {
@@ -1397,7 +1549,7 @@ function validateGeofence(payload) {
   // BUGFIX: เรียก ensureLocationSheetSchema() ก่อนอ่านเสมอ เพื่อให้แถวพื้นที่เก่าที่ยังไม่มีคอลัมน์
   // maxAccuracy ได้รับการเพิ่มคอลัมน์อัตโนมัติ (ไม่กระทบข้อมูลเดิม) ก่อนจะนำไปตรวจสอบ
   ensureLocationSheetSchema();
-  const areas = getSheetDataAsObjects("location");
+  const areas = getSheetDataAsObjectsCached_("location", SHEET_CACHE_TTL_SEC);
   // ค้นหาพื้นที่โดยเน้นที่ areaId หรือ qr_code (รองรับ Legacy)
   let area = areas.find((a) => {
     const id = String(a.areaId || a.qr_code || "").trim();
@@ -1579,11 +1731,13 @@ function saveLog(payload) {
     // halfDayStatus: Frontend เป็นผู้คำนวณค่านี้มาก่อนแล้ว (Single Source of Truth) ตอนนี้เก็บค่าที่
     // ส่งมาตรงๆ เป็น Snapshot เท่านั้น — ห้ามคำนวณใหม่ที่นี่เด็ดขาด (ดูคอมเมนต์หัวไฟล์เรื่อง
     // syncHalfDayStatusColumn() ที่เลิกใช้แล้ว เพราะ recalculate ทับข้อมูลเก่าซึ่งผิด Requirement)
-    if (h === "halfDayStatus") return payload.halfDayStatus ? String(payload.halfDayStatus) : "";
+    if (h === "halfDayStatus")
+      return payload.halfDayStatus ? String(payload.halfDayStatus) : "";
     return "";
   });
 
   sheet.appendRow(rowData);
+  invalidateSheetCache_(LOGS_SHEET_NAME); // ⚡ ล้าง cache ทันทีที่มีการเช็คอินใหม่
   const result = {
     ok: true,
     message: "บันทึกข้อมูลสำเร็จ",
@@ -1766,6 +1920,8 @@ function handleSaveLogName(payload) {
     return { ok: false, err: "ไม่พบรายการ Log ที่ตรงกันเพื่ออัปเดตชื่อ" };
   }
 
+  invalidateSheetCache_(LOGS_SHEET_NAME); // ⚡ ล้าง cache ทันทีที่ admin แก้ชื่อใน Logs
+
   return {
     ok: true,
     message: "อัปเดตชื่อ " + updatedCount + " รายการสำเร็จ",
@@ -1824,6 +1980,8 @@ function handleSaveLogEmployeeId(payload) {
       updatedCount++;
     }
   }
+
+  invalidateSheetCache_(LOGS_SHEET_NAME); // ⚡ ล้าง cache ทันทีที่ admin แก้ Employee ID ใน Logs
 
   return {
     ok: true,

@@ -3,12 +3,12 @@
   const PENDING_KEY = "pending_checkin_payload";
   const LAST_CHECKIN_KEY = "last_checkin";
   const AREA_CACHE_KEY = "checkin_area_cache";
-  // const API_URL = "https://script.google.com/macros/s/AKfycbyArqRdRbW-h1PpR7vPfOMw76PQeF6hgNrZhEasqiv-zl-SlwbbK2UdBaj_PfHARAKp/exec";
-  // const LIFF_ID = "2008594376-aBuTJTic";
+  const API_URL = "https://script.google.com/macros/s/AKfycbxi64mybj1BOUHx_IqZri9toPYRc1FOyaNNFURWLQ0rZ-oUybKkJGp1zq2cEUXLDAQ7/exec";
+  const LIFF_ID = "2008594376-aBuTJTic";
 
   //test
-  const API_URL = "https://script.google.com/macros/s/AKfycbyZkfTo42-WCyzI4mXsqKHhwFuPkGx4Y9w4SpE41h5w6_S9IEaGXY6WOwRyrQs3DABG/exec";
-  const LIFF_ID = "2008594376-MrQ7IGVX";
+  // const API_URL = "https://script.google.com/macros/s/AKfycbyZkfTo42-WCyzI4mXsqKHhwFuPkGx4Y9w4SpE41h5w6_S9IEaGXY6WOwRyrQs3DABG/exec";
+  // const LIFF_ID = "2008594376-MrQ7IGVX";
 
   const DEFAULT_AREA = {
     areaId: "",
@@ -136,7 +136,27 @@
     return AREA_CACHE_KEY;
   }
 
-  async function requestJson(action, payload = null, method = "GET", timeoutMs = 20000) {
+  // ⚠️ BUGFIX (Error "เกิดข้อผิดพลาด GPS" ตอนสแกนเช็คอินช่วงเร่งด่วน, ไม่เกี่ยวกับ GPS จริงๆ):
+  // ช่วงเวลาที่พนักงานหลายคนสแกนพร้อมกัน (เช่น 7:50-8:00) หลายคนมักอยู่หลัง NAT/IP เดียวกัน
+  // (มือถือเครือข่ายเดียวกัน/WiFi เดียวกัน) พอจำนวน request ไปยัง script.google.com ถี่มากใน
+  // เวลาสั้นๆ Google จะตอบกลับเป็นหน้า HTML "ตรวจพบการเข้าใช้งานผิดปกติ" (unusual traffic) แทนที่
+  // จะส่งต่อไปรัน Apps Script จริง — request ไม่เคยไปถึง doPost() เลย จึงไม่มีการบันทึกเกิดขึ้น
+  // เดิมโค้ดจะ throw Error โดยฝัง HTML ดิบทั้งก้อนเข้าไปใน message แล้ว normalizeError() (utils-
+  // enhanced.js) ไปจับคู่ substring "location" ที่อยู่ใน boilerplate ของ Google (window.location
+  // ฯลฯ) ทำให้เข้าใจผิดว่าเป็น GPS error ทั้งที่ไม่เกี่ยวกันเลย
+  // แก้โดย: ตรวจจับลายเซ็นหน้า HTML/traffic-block ของ Google แยกออกมาก่อน ไม่ฝัง HTML ดิบลงใน
+  // message ที่โชว์ผู้ใช้ ติด err.type ให้ชัดเจนเพื่อให้ normalizeError() จัดหมวดถูกโดยไม่ต้องเดา
+  // จาก string และ retry อัตโนมัติเฉพาะกรณีนี้ (ปลอดภัย เพราะ request ไม่เคยไปถึง backend เลย)
+  function isNonJsonGoogleBlock(text) {
+    const t = String(text || "").toLowerCase();
+    return (
+      t.includes("ppconfig") ||
+      t.trim().startsWith("<!doctype html") ||
+      t.trim().startsWith("<html")
+    );
+  }
+
+  async function requestJsonOnce(action, payload, method, timeoutMs) {
     const upper = String(method || "GET").toUpperCase();
     let url = API_URL;
     const options = {
@@ -188,7 +208,18 @@
       try {
         data = JSON.parse(text);
       } catch (e) {
-        throw new Error("Apps Script ตอบกลับไม่ใช่ JSON: " + text);
+        // console.error เก็บ text เต็มๆ ไว้เพื่อ debug แต่ห้ามฝัง HTML ดิบทั้งก้อนลงใน
+        // Error message ที่จะโผล่ให้ user เห็น (ยาวเกินไป และทำให้ normalizeError() จับคู่ผิด)
+        console.error("[CheckinCommon] requestJson: response ไม่ใช่ JSON, raw text:", text);
+        const blocked = isNonJsonGoogleBlock(text);
+        const parseErr = new Error(
+          blocked
+            ? "Google บล็อกการเชื่อมต่อชั่วคราว (unusual traffic)"
+            : "เซิร์ฟเวอร์ตอบกลับข้อมูลไม่ถูกต้อง (ไม่ใช่ JSON)",
+        );
+        parseErr.type = blocked ? "google_traffic_block" : "invalid_json_response";
+        parseErr.retryable = true;
+        throw parseErr;
       }
       if (!response.ok || data.ok === false) {
         throw new Error(data.err || data.error || data.message || "การร้องขอ API ล้มเหลว");
@@ -201,6 +232,36 @@
       if (timeoutId) clearTimeout(timeoutId);
       if (hardTimeoutId) clearTimeout(hardTimeoutId);
     }
+  }
+
+  function sleepMs(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // requestJson(): wrapper รอบ requestJsonOnce() ที่เพิ่ม retry อัตโนมัติเฉพาะกรณี
+  // err.type === "google_traffic_block" (สูงสุด 2 ครั้ง รวมครั้งแรกเป็น 3 ครั้ง, หน่วง
+  // ~1.5s และ ~3s + jitter 0-500ms) เพราะ error ประเภทนี้แปลว่า request ไม่เคยไปถึง Apps
+  // Script เลย จึงไม่มีความเสี่ยงเรื่องบันทึกซ้ำ ไม่ว่า action จะเป็นอะไรก็ตาม (logs, location,
+  // users ฯลฯ) ไม่แตะ logic เดิมของ timeout/AbortController ใน requestJsonOnce() เลย
+  async function requestJson(action, payload = null, method = "GET", timeoutMs = 20000) {
+    const RETRY_DELAYS_MS = [1500, 3000];
+    let lastErr = null;
+    for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+      try {
+        return await requestJsonOnce(action, payload, method, timeoutMs);
+      } catch (err) {
+        lastErr = err;
+        const canRetry = err && err.type === "google_traffic_block" && attempt < RETRY_DELAYS_MS.length;
+        if (!canRetry) throw err;
+        const baseDelay = RETRY_DELAYS_MS[attempt];
+        const jitter = Math.random() * 500;
+        console.warn(
+          `[CheckinCommon] requestJson: Google traffic-block, ลองใหม่ (ครั้งที่ ${attempt + 2}/${RETRY_DELAYS_MS.length + 1}, action="${action}") หลังจาก ${Math.round(baseDelay + jitter)}ms`,
+        );
+        await sleepMs(baseDelay + jitter);
+      }
+    }
+    throw lastErr;
   }
 
   function cacheAreas(list) {
